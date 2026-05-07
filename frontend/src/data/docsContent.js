@@ -131,7 +131,7 @@ const docsContent = {
           {
             heading: "01 / ENTERING THE COMMAND CENTER",
             body: [
-              "Tap the lobby logo five times within 1.5 seconds, then enter the admin password (default: "Secret").",
+              "Tap the lobby logo five times within 1.5 seconds, then enter the admin password (default: It's a secret!).",
               "The admin connection is a non-combatant WebSocket — opening the panel never spawns a player into the world.",
             ],
           },
