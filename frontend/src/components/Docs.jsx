@@ -91,7 +91,7 @@ const DOC_LABELS = {
   setup:              { en: "Setup",             "zh-TW": "環境建置" },
   deploymentGuide:    { en: "Deployment",        "zh-TW": "部署指南" },
   modificationGuide:  { en: "Modifications",     "zh-TW": "修改指南" },
-  stressTesting:      { en: "Stress Testing",    "zh-TW": "壓力測試" },
+
   advancedSystems:    { en: "Advanced Systems",  "zh-TW": "進階系統" },
   routingGuide:       { en: "Routing",           "zh-TW": "路由指南" },
   developmentLog:     { en: "Dev Log",           "zh-TW": "開發日誌" },
