@@ -25,7 +25,14 @@ class Bullet(GameObject):
         damage: float,
         speed: float = 600.0,
         ttl: float = 1.5,
+        w: float = 6.0,
+        h: float = 6.0,
     ) -> "Bullet":
+        # EN: Phase 10 — accept optional w/h so heavy projectiles (rocket) can
+        #     declare a larger collision/visual hitbox. Defaults stay at 6×6
+        #     so existing weapons emit the same wire bytes (zero churn).
+        # zh-TW: Phase 10 — 接受可選的 w/h，讓重型彈頭（火箭）能宣告較大的
+        #     碰撞 / 視覺 hitbox。預設仍為 6×6，既有武器的線上格式不會變動。
         return cls(
             x=x,
             y=y,
@@ -35,6 +42,8 @@ class Bullet(GameObject):
             damage=damage,
             speed=speed,
             ttl=ttl,
+            w=w,
+            h=h,
         )
 
     def update(self, dt: float) -> None:

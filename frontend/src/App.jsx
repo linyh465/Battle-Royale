@@ -56,6 +56,14 @@ function Lobby({ wsUrl }) {
   const [name, setName] = useState("");
   const [weapon, setWeapon] = useState("rifle");
   const [clientUrl, setClientUrl] = useState("");
+  // EN: Phase 10 — comma-separated whitelist of weapon IDs the server has
+  //     enabled. Driven by /api/settings on first paint and refreshed
+  //     periodically so admin toggles propagate to lobby clients without
+  //     them needing a WebSocket. Defaults to all six on cold start.
+  // zh-TW: Phase 10 — 伺服器目前允許的武器 CSV 白名單。第一次進大廳時由
+  //     /api/settings 抓回，之後定期刷新，讓管理員開關武器時，大廳玩家不
+  //     需要先連 WebSocket 也能看到變化。冷啟動時預設全 6 種開放。
+  const [allowedWeapons, setAllowedWeapons] = useState("pistol,rifle,shotgun,sniper,smg,rocket");
   const trimmedName = name.trim();
 
   // EN: admin password stash — verified by server on connect.
@@ -71,16 +79,68 @@ function Lobby({ wsUrl }) {
   const adminSendRef = useRef(() => {});
 
   useEffect(() => {
+    // EN: Phase 10 QR fix — in production (HTTPS or any non-loopback host)
+    //     the QR must point at `window.location.origin` (e.g. https://gun.piyou.me),
+    //     NOT the LAN IP that /api/lan-info returns (which is meaningful only
+    //     during local dev). We fall through to /api/lan-info only when the
+    //     player is browsing on localhost / 127.0.0.1.
+    // zh-TW: Phase 10 QR 修正 — 生產環境（HTTPS 或任何非 loopback 主機）
+    //     QR 必須指向 `window.location.origin`（例如 https://gun.piyou.me），
+    //     不能指向 /api/lan-info 回傳的 LAN IP（那只在本機 dev 有意義）。
+    //     僅在使用者瀏覽 localhost / 127.0.0.1 時才走 /api/lan-info。
+    const host = location.hostname;
+    const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+    if (!isLocalDev) {
+      setClientUrl(window.location.origin);
+      return;
+    }
     let aborted = false;
     fetch("/api/lan-info")
       .then((r) => r.json())
       .then((info) => {
         if (aborted) return;
-        setClientUrl(info?.client_url || `${location.protocol}//${location.host}`);
+        setClientUrl(info?.client_url || window.location.origin);
       })
-      .catch(() => setClientUrl(`${location.protocol}//${location.host}`));
+      .catch(() => setClientUrl(window.location.origin));
     return () => { aborted = true; };
   }, []);
+
+  // EN: Phase 10 — poll /api/settings so the lobby weapon picker reacts
+  //     to admin toggles in near real-time. 3 s cadence is more than fast
+  //     enough for human-paced settings changes; we don't open a WS just
+  //     for this. If the request fails (offline, API hiccup), we keep the
+  //     last-known list rather than nuking the UI.
+  // zh-TW: Phase 10 — 定期 polling /api/settings，讓大廳的武器選單能近乎
+  //     即時反映管理員的切換。3 秒節奏對人手操作已足夠快，不另外開 WS。
+  //     請求失敗（離線 / API 暫時抖動）時保留上一份清單，避免 UI 瞬間清空。
+  useEffect(() => {
+    let aborted = false;
+    const fetchSettings = () => {
+      fetch("/api/settings")
+        .then((r) => r.json())
+        .then((info) => {
+          if (aborted) return;
+          if (typeof info?.allowed_weapons === "string") {
+            setAllowedWeapons(info.allowed_weapons);
+          }
+        })
+        .catch(() => {});
+    };
+    fetchSettings();
+    const id = setInterval(fetchSettings, 3000);
+    return () => { aborted = true; clearInterval(id); };
+  }, []);
+
+  // EN: If the player's currently-selected weapon was just disabled by the
+  //     admin, snap to the first allowed one. Avoids the awkward state of
+  //     trying to spawn with a weapon the server will silently reroll.
+  // zh-TW: 玩家目前選中的武器若剛被管理員禁用，自動切回第一個還允許的武器，
+  //     避免 join 後伺服器才靜默改派的尷尬時序。
+  useEffect(() => {
+    const allowed = allowedWeapons.split(",").map(s => s.trim()).filter(Boolean);
+    if (allowed.length === 0) return;
+    if (!allowed.includes(weapon)) setWeapon(allowed[0]);
+  }, [allowedWeapons, weapon]);
 
   // EN: 5-click hidden admin trigger. Window is 1.5 s; older clicks expire.
   // zh-TW: 隱藏管理員觸發 — 1.5 秒內連點 5 下，舊紀錄會自動過期。
@@ -264,23 +324,42 @@ function Lobby({ wsUrl }) {
             <span className="br-tick" />
             <h2 className="br-h2">{t.loadout}</h2>
           </div>
-          <div className="br-loadout">
+          {/* EN: Phase 10 — six-weapon reactive picker. Cards greyed out when
+                  the server has disabled that weapon via allowed_weapons.
+                  Disabled cards are non-clickable so players can't try to
+                  cheat past the whitelist. (Server enforces too — this is UX.)
+              zh-TW: Phase 10 — 六種武器的反應式選單。伺服器在 allowed_weapons
+                  中關閉的武器會變灰且無法點擊，避免玩家硬選後被伺服器靜默
+                  改派。後端也會做最終強制（前端僅 UX）。 */}
+          <div className="br-loadout br-loadout--six">
             {[
-              { id: "pistol",  label: t.pistol,  stat: "FAST" },
-              { id: "rifle",   label: t.rifle,   stat: "BALANCED" },
-              { id: "shotgun", label: t.shotgun, stat: "BURST" },
-            ].map((w) => (
-              <button
-                key={w.id}
-                className={`br-loadout-card ${weapon === w.id ? "is-active" : ""}`}
-                onClick={() => setWeapon(w.id)}
-                type="button"
-              >
-                <WeaponIcon kind={w.id} />
-                <span className="br-loadout-label">{w.label}</span>
-                <span className="br-loadout-stat">{w.stat}</span>
-              </button>
-            ))}
+              { id: "pistol",  label: t.weapon_pistol,  stat: "BALANCED" },
+              { id: "rifle",   label: t.weapon_rifle,   stat: "AUTO" },
+              { id: "shotgun", label: t.weapon_shotgun, stat: "BURST" },
+              { id: "sniper",  label: t.weapon_sniper,  stat: "ONESHOT" },
+              { id: "smg",     label: t.weapon_smg,     stat: "RAPID" },
+              { id: "rocket",  label: t.weapon_rocket,  stat: "HEAVY" },
+            ].map((w) => {
+              const allowedSet = new Set(
+                allowedWeapons.split(",").map(s => s.trim()).filter(Boolean)
+              );
+              const enabled = allowedSet.has(w.id);
+              return (
+                <button
+                  key={w.id}
+                  className={`br-loadout-card ${weapon === w.id ? "is-active" : ""} ${enabled ? "" : "is-disabled"}`}
+                  onClick={() => enabled && setWeapon(w.id)}
+                  disabled={!enabled}
+                  title={enabled ? w.label : t.weaponDisabled}
+                  type="button"
+                  style={enabled ? undefined : { opacity: 0.35, cursor: "not-allowed" }}
+                >
+                  <WeaponIcon kind={w.id} />
+                  <span className="br-loadout-label">{w.label}</span>
+                  <span className="br-loadout-stat">{enabled ? w.stat : t.locked}</span>
+                </button>
+              );
+            })}
           </div>
 
           <button
@@ -322,16 +401,24 @@ function Lobby({ wsUrl }) {
                 <div className="br-qr-corner br-qr-corner--tr" />
                 <div className="br-qr-corner br-qr-corner--bl" />
                 <div className="br-qr-corner br-qr-corner--br" />
-                {clientUrl ? (
-                  <QRCodeSVG
-                    value={clientUrl}
-                    size={176}
-                    bgColor="#03070d"
-                    fgColor="#e6f7ff"
-                    level="M"
-                    className="br-qr-svg"
-                  />
-                ) : (
+                <QRCodeSVG
+                  /* EN: Always seed the QR with window.location.origin so the
+                         production domain (e.g. https://gun.piyou.me) is in
+                         the QR before /api/settings or /api/lan-info finishes.
+                         If clientUrl resolves to something different (LAN dev
+                         flow), use that instead.
+                     zh-TW: QR 預設用 window.location.origin，確保生產網址
+                         （例如 https://gun.piyou.me）在 /api/settings 或
+                         /api/lan-info 還沒回來前就已經正確；若 clientUrl
+                         解析成別的值（本機 dev 的 LAN URL），則改用那個。 */
+                  value={clientUrl || window.location.origin}
+                  size={176}
+                  bgColor="#03070d"
+                  fgColor="#e6f7ff"
+                  level="M"
+                  className="br-qr-svg"
+                />
+                {!clientUrl && location.hostname !== window.location.hostname && (
                   <div className="br-qr-detect">{t.detect}</div>
                 )}
               </div>
@@ -373,6 +460,39 @@ function WeaponIcon({ kind }) {
     return (
       <svg viewBox="0 0 32 24" className="br-weapon-icon" aria-hidden>
         <path d="M2 10 H26 L30 7 V17 L26 14 H22 L20 20 H10 L8 14 H2 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    );
+  }
+  if (kind === "sniper") {
+    // EN: long barrel + scope.
+    // zh-TW: 長槍管 + 光學瞄具。
+    return (
+      <svg viewBox="0 0 32 24" className="br-weapon-icon" aria-hidden>
+        <path d="M2 11 H30 V13 H2 Z" fill="currentColor" />
+        <circle cx="11" cy="8" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M11 5.5 V10.5 M8.5 8 H13.5" stroke="currentColor" strokeWidth="1" />
+        <path d="M22 12 V18 H18 V14" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  if (kind === "smg") {
+    // EN: stubby compact silhouette.
+    // zh-TW: 短身緊湊輪廓。
+    return (
+      <svg viewBox="0 0 32 24" className="br-weapon-icon" aria-hidden>
+        <path d="M5 9 H22 V13 H24 L26 11 V15 L24 13 H22 V17 L18 20 H10 L8 17 H5 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M12 9 V6 H15 V9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  if (kind === "rocket") {
+    // EN: launch tube + warhead.
+    // zh-TW: 發射筒 + 彈頭。
+    return (
+      <svg viewBox="0 0 32 24" className="br-weapon-icon" aria-hidden>
+        <path d="M3 9 H22 L27 12 L22 15 H3 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M22 12 L29 12" stroke="currentColor" strokeWidth="2" />
+        <path d="M6 9 V6 H9 V9 M6 15 V18 H9 V15" fill="none" stroke="currentColor" strokeWidth="1.2" />
       </svg>
     );
   }

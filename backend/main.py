@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from engine import GameEngine
+from models import ALL_WEAPON_IDS as _ALL_WEAPON_IDS_TUPLE
 
 engine = GameEngine()
 
@@ -45,7 +46,22 @@ async def lifespan(_app: FastAPI):
             pass
 
 
-app = FastAPI(title="Continuous Deathmatch Server", lifespan=lifespan)
+# EN: Phase 10 — move FastAPI's interactive docs off /docs because we
+#     now mount MkDocs at /docs (the public game docs site). Swagger UI
+#     still works at /api-docs and ReDoc at /api-redoc.
+# zh-TW: Phase 10 — FastAPI 內建 Swagger 文件改掛在 /api-docs，
+#     讓 /docs 留給對外公開的 MkDocs 文件站。ReDoc 也順移到 /api-redoc。
+app = FastAPI(
+    title="Continuous Deathmatch Server",
+    lifespan=lifespan,
+    docs_url="/api-docs",
+    redoc_url="/api-redoc",
+    openapi_url="/api-docs/openapi.json",
+    # EN: Move Swagger's OAuth2 redirect off /docs so it doesn't shadow the
+    #     MkDocs mount.
+    # zh-TW: 把 Swagger 的 OAuth2 redirect 從 /docs 移開，避免遮蔽 MkDocs 掛載點。
+    swagger_ui_oauth2_redirect_url="/api-docs/oauth2-redirect",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -63,6 +79,27 @@ async def health():
 async def lan_info():
     ip = detect_lan_ip()
     return {"lan_ip": ip, "vite_port": 5173, "client_url": f"http://{ip}:5173"}
+
+
+@app.get("/api/settings")
+async def public_settings():
+    # EN: Phase 10 — public read-only view of the game settings the lobby
+    #     needs *before* opening a WebSocket. Currently exposed:
+    #       allowed_weapons — CSV whitelist driving the lobby's weapon picker.
+    #       all_weapons     — every weapon ID the engine knows about (for the
+    #                         admin checklist UI on first paint).
+    #     Sensitive fields (admin password, internal timers) are deliberately
+    #     omitted — anything truly private must stay behind the WS handshake.
+    # zh-TW: Phase 10 — 大廳尚未開啟 WebSocket 之前需要的公開只讀設定。
+    #     目前回傳：
+    #       allowed_weapons — 大廳武器選單依此 CSV 白名單顯示。
+    #       all_weapons     — 引擎已知的全部武器 ID（給管理員 checklist 第一次
+    #                         渲染使用）。
+    #     管理員密碼等敏感資訊一律不對外，全部留在 WebSocket 握手之後。
+    return {
+        "allowed_weapons": engine.settings.allowed_weapons,
+        "all_weapons": list(_ALL_WEAPON_IDS_TUPLE),
+    }
 
 
 # ── Helper: build the current admin settings dict ──
@@ -312,6 +349,52 @@ def _resolve_frontend_dist() -> Path | None:
     return None
 
 
+def _resolve_mkdocs_site() -> Path | None:
+    # EN: Phase 10 — locate the built MkDocs static site
+    #     (mkdocs build → docs/site by default). Resolution mirrors
+    #     `_resolve_frontend_dist` so the same env-override pattern works:
+    #       1. $MKDOCS_SITE_DIR override (Dockerfile sets this).
+    #       2. ../docs/site relative to this file.
+    #       3. /app/docs/site (Docker layout).
+    #     Returns None if the docs were never built — the route is then
+    #     skipped silently (dev mode without `mkdocs build`).
+    # zh-TW: Phase 10 — 找到 MkDocs build 出來的靜態站台目錄
+    #     （mkdocs build 預設 → docs/site）。解析順序與 `_resolve_frontend_dist`
+    #     相同：
+    #       1. $MKDOCS_SITE_DIR 環境變數覆寫（Dockerfile 已設定）。
+    #       2. 相對本檔的 ../docs/site。
+    #       3. /app/docs/site（Docker 佈局）。
+    #     若文件尚未 build 出來則回傳 None，路由會被靜默略過
+    #     （本機未跑 mkdocs build 時）。
+    candidates: list[Path] = []
+    env_path = os.environ.get("MKDOCS_SITE_DIR")
+    if env_path:
+        candidates.append(Path(env_path))
+    here = Path(__file__).resolve().parent
+    candidates.append(here.parent / "docs" / "site")
+    candidates.append(Path("/app/docs/site"))
+    for p in candidates:
+        if p.is_dir() and (p / "index.html").is_file():
+            return p
+    return None
+
+
+# ─── /docs — MkDocs static site (Phase 10) ───
+# EN: Mount BEFORE the SPA catch-all so /docs/** resolves to the MkDocs site
+#     instead of falling back to React's index.html. `html=True` lets
+#     StaticFiles serve `/docs/foo/` as `/docs/foo/index.html`.
+# zh-TW: 在 SPA catch-all 之前掛載，這樣 /docs/** 會命中 MkDocs 而非
+#     React 的 index.html。`html=True` 會自動把 `/docs/foo/` 解析為
+#     `/docs/foo/index.html`。
+_mkdocs_site = _resolve_mkdocs_site()
+if _mkdocs_site is not None:
+    app.mount(
+        "/docs",
+        StaticFiles(directory=str(_mkdocs_site), html=True),
+        name="mkdocs",
+    )
+
+
 _dist = _resolve_frontend_dist()
 if _dist is not None:
     # EN: Mount /assets first so hashed JS/CSS resolve correctly.
@@ -324,9 +407,16 @@ if _dist is not None:
     # zh-TW: dist 根目錄下的靜態資源（favicon、robots.txt 等）。
     @app.get("/{filename:path}", include_in_schema=False)
     async def spa_fallback(filename: str):
-        # EN: Skip API/WS-style paths so they don't collide with this catch-all.
-        # zh-TW: 跳過 API / WS 類路徑，避免與 catch-all 衝突。
-        if filename.startswith(("api/", "ws", "health")):
+        # EN: Skip API/WS-style and docs-style paths so they don't collide
+        #     with this catch-all. /docs is served by the MkDocs StaticFiles
+        #     mount above; /api-docs and /api-redoc are FastAPI's own.
+        # zh-TW: 跳過 API/WS 與文件相關路徑，避免與 catch-all 衝突。
+        #     /docs 由上面的 MkDocs StaticFiles 提供；
+        #     /api-docs、/api-redoc 由 FastAPI 自己處理。
+        if filename.startswith((
+            "api/", "api-docs", "api-redoc",
+            "ws", "health", "docs", "docs/",
+        )):
             raise HTTPException(status_code=404)
         candidate = _dist / filename
         if filename and candidate.is_file():

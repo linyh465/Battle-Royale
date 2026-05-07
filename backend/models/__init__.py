@@ -1,7 +1,16 @@
 from .game_object import GameObject
 from .player import Player, STATE_ALIVE, STATE_DEAD, STATE_SPECTATING
 from .bot import BotPlayer
-from .weapon import Weapon, Pistol, Shotgun, Rifle
+from .weapon import (
+    Weapon,
+    Pistol,
+    Shotgun,
+    Rifle,
+    Sniper,
+    SMG,
+    RocketLauncher,
+    ALL_WEAPON_IDS,
+)
 from .bullet import Bullet
 
 __all__ = [
@@ -12,6 +21,10 @@ __all__ = [
     "Pistol",
     "Shotgun",
     "Rifle",
+    "Sniper",
+    "SMG",
+    "RocketLauncher",
+    "ALL_WEAPON_IDS",
     "Bullet",
     "STATE_ALIVE",
     "STATE_DEAD",

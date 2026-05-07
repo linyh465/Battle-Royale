@@ -79,12 +79,17 @@ function expandPlayer(p) {
 
 function expandBullet(b) {
   if (b && typeof b.owner_id === "string") return b;
+  // EN: Phase 10 — `bw`/`bh` are only on the wire when the bullet hitbox
+  //     differs from the 6×6 default (currently rocket = 14×14). When
+  //     absent, fall back to the default constants.
+  // zh-TW: Phase 10 — bw/bh 只有在子彈 hitbox 不是預設 6×6 時才會送
+  //     （目前只有 rocket=14×14）。沒帶就用預設常數。
   return {
     id: b.i,
     x: b.x,
     y: b.y,
-    w: BULLET_W,
-    h: BULLET_H,
+    w: typeof b.bw === "number" ? b.bw : BULLET_W,
+    h: typeof b.bh === "number" ? b.bh : BULLET_H,
     owner_id: b.o,
     damage: b.dm,
     alive: b.al === 1,

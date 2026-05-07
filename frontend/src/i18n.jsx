@@ -99,6 +99,17 @@ const TRANSLATIONS = {
     matchResetNotice: "MATCH RESET",
     // Leaderboard sort
     sortBy: "Sort by",
+    // Phase 10 — six-weapon arsenal
+    weapon_pistol: "Pistol",
+    weapon_rifle: "Assault Rifle",
+    weapon_shotgun: "Shotgun",
+    weapon_sniper: "Sniper",
+    weapon_smg: "SMG",
+    weapon_rocket: "Rocket Launcher",
+    weaponArsenal: "Weapon Arsenal",
+    weaponArsenalHint: "Toggle which weapons players may pick. Disabling a weapon mid-match reassigns every alive player still holding it.",
+    weaponDisabled: "Disabled by admin",
+    locked: "LOCKED",
   },
   zh: {
     // Lobby
@@ -198,6 +209,17 @@ const TRANSLATIONS = {
     matchResetNotice: "對戰已重置",
     // Leaderboard sort
     sortBy: "排序依據",
+    // Phase 10 — 六種武器庫
+    weapon_pistol: "手槍",
+    weapon_rifle: "突擊步槍",
+    weapon_shotgun: "霰彈槍",
+    weapon_sniper: "狙擊槍",
+    weapon_smg: "衝鋒槍",
+    weapon_rocket: "火箭筒",
+    weaponArsenal: "武器啟用清單",
+    weaponArsenalHint: "切換玩家可選的武器。比賽中關閉某把武器，所有持該武器的存活玩家會立即被隨機改派。",
+    weaponDisabled: "管理員已停用",
+    locked: "停用中",
   },
   vi: {
     // Lobby
@@ -297,6 +319,17 @@ const TRANSLATIONS = {
     matchResetNotice: "TRẬN ĐẤU ĐÃ ĐẶT LẠI",
     // Leaderboard sort
     sortBy: "Sắp xếp theo",
+    // Phase 10 — six-weapon arsenal
+    weapon_pistol: "Súng Lục",
+    weapon_rifle: "Súng Trường Tấn Công",
+    weapon_shotgun: "Súng Hoa Cải",
+    weapon_sniper: "Súng Bắn Tỉa",
+    weapon_smg: "Tiểu Liên",
+    weapon_rocket: "Súng Phóng Tên Lửa",
+    weaponArsenal: "Kho vũ khí",
+    weaponArsenalHint: "Bật/tắt vũ khí người chơi được chọn. Tắt giữa trận sẽ đổi vũ khí của mọi người chơi còn sống.",
+    weaponDisabled: "Đã bị admin tắt",
+    locked: "ĐÃ KHÓA",
   },
 };
 

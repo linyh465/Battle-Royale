@@ -9,12 +9,16 @@ from dataclasses import dataclass
 from typing import Dict, List, Set
 
 from models import (
+    ALL_WEAPON_IDS,
     Bullet,
     Player,
     BotPlayer,
     Pistol,
     Rifle,
     Shotgun,
+    Sniper,
+    SMG,
+    RocketLauncher,
     STATE_ALIVE,
     STATE_DEAD,
     STATE_SPECTATING,
@@ -38,11 +42,23 @@ TICK_DT = 1.0 / TICK_RATE
 WORLD_W = 2560
 WORLD_H = 1440
 
+# EN: Registry mapping the canonical wire ID → Weapon subclass. Six entries
+#     (Phase 10) — used by lobby selectors, allowed_weapons gating, and
+#     mid-game reassign.
+# zh-TW: 把線上 ID 對應到 Weapon 子類的 registry，Phase 10 共六種。
+#     大廳選單、allowed_weapons 過濾與 mid-game 重新指派都會用到。
 WEAPON_REGISTRY = {
     "pistol": Pistol,
     "rifle": Rifle,
     "shotgun": Shotgun,
+    "sniper": Sniper,
+    "smg": SMG,
+    "rocket": RocketLauncher,
 }
+
+# EN: Default allowed-weapons CSV — every weapon enabled out of the box.
+# zh-TW: allowed_weapons 預設 CSV — 開箱即用、全部開放。
+DEFAULT_ALLOWED_WEAPONS = ",".join(ALL_WEAPON_IDS)
 
 
 @dataclass
@@ -63,6 +79,13 @@ class GameSettings:
     # Standalone bot management
     bots_enabled: bool = False
     bot_count: int = 0
+    # EN: Phase 10 — comma-separated whitelist of weapon IDs the lobby + engine
+    #     are allowed to hand out. Disabling an entry mid-match triggers a
+    #     forced random reassign for all alive players holding it.
+    # zh-TW: Phase 10 — 以逗號分隔的武器白名單，大廳選單與引擎都受其約束。
+    #     比賽中關閉某把武器時，引擎會強制把所有持該武器的存活玩家
+    #     隨機改派到目前還允許的武器之一。
+    allowed_weapons: str = DEFAULT_ALLOWED_WEAPONS
 
 
 # ── NOTE: SafeZone / Poison Zone has been REMOVED in Phase 2. ──
@@ -129,13 +152,23 @@ class GameEngine:
 
     def add_player(self, name: str, ws) -> Player:
         # EN: Creates a new combatant Player and registers the WS connection.
+        #     Phase 10 — if the default Pistol is currently disabled by the
+        #     allowed_weapons whitelist, swap to a random allowed weapon so
+        #     joiners never spawn holding a banned gun.
         #     Wakes the simulation loop if it was idle.
         # zh-TW: 建立新的戰鬥玩家並註冊其 WebSocket 連線。
+        #     Phase 10 — 若預設手槍已被 allowed_weapons 白名單禁用，
+        #     直接改成隨機允許的武器，避免玩家一加入就拿到被禁的武器。
         #     若 loop 處於閒置睡眠，則同時喚醒它。
         x, y = self._spawn_position()
         p = Player(name=name or "anon", x=x, y=y)
         p.max_hp = self.settings.default_player_hp
         p.hp = p.max_hp
+        allowed = self._allowed_weapons_set()
+        if p.weapon.name not in allowed:
+            cls = WEAPON_REGISTRY.get(self._pick_random_allowed_weapon())
+            if cls:
+                p.weapon = cls()
         if self.settings.team_mode:
             p.team = self._next_team_assignment()
         self.players[p.id] = p
@@ -175,11 +208,54 @@ class GameEngine:
         self.admin_ws.pop(admin_id, None)
         self.admin_conns.discard(admin_id)
 
+    def _allowed_weapons_set(self) -> set[str]:
+        # EN: Parse the CSV whitelist into a set of valid weapon IDs that
+        #     also exist in the registry. Falls back to every weapon if the
+        #     parsed set is empty (admin must always have *something* to
+        #     hand out — empty whitelist would brick the lobby).
+        # zh-TW: 把 CSV 白名單解析成存在於 registry 中的武器 ID 集合。
+        #     若解析結果為空（管理員不能讓武器庫變成完全空），自動回退為全部
+        #     武器，避免大廳卡住。
+        raw = self.settings.allowed_weapons or ""
+        ids = {s.strip() for s in raw.split(",") if s.strip() in WEAPON_REGISTRY}
+        return ids if ids else set(WEAPON_REGISTRY.keys())
+
+    def _pick_random_allowed_weapon(self) -> str:
+        return random.choice(sorted(self._allowed_weapons_set()))
+
     def set_weapon(self, pid: str, weapon_name: str) -> None:
+        # EN: Honour the allowed_weapons whitelist. Requesting a banned weapon
+        #     silently snaps to a random allowed one so the player always
+        #     leaves the call holding *something* legal.
+        # zh-TW: 遵守 allowed_weapons 白名單。請求被禁的武器時自動改派到隨機
+        #     允許的武器，確保玩家最後一定持有合法武器。
         p = self.players.get(pid)
-        cls = WEAPON_REGISTRY.get(weapon_name)
-        if p and cls:
+        if not p:
+            return
+        allowed = self._allowed_weapons_set()
+        chosen = weapon_name if weapon_name in allowed else self._pick_random_allowed_weapon()
+        cls = WEAPON_REGISTRY.get(chosen)
+        if cls:
             p.weapon = cls()
+
+    def _sync_allowed_weapons(self) -> None:
+        # EN: Mid-game override. Whenever the admin updates allowed_weapons,
+        #     iterate every alive player; if their weapon was just removed
+        #     from the whitelist, immediately reassign them to a random
+        #     currently-allowed weapon. Dead/spectating players are left
+        #     alone — they'll be reassigned on respawn via set_weapon.
+        # zh-TW: 比賽中即時覆寫。管理員更新 allowed_weapons 後，遍歷所有
+        #     存活玩家，若其武器剛被移出白名單，立即隨機改派為目前還允許的
+        #     其中一把。死亡 / 觀戰中的玩家先不動，會在重生時透過 set_weapon
+        #     自動修正。
+        allowed = self._allowed_weapons_set()
+        for p in self.players.values():
+            if p.state != STATE_ALIVE:
+                continue
+            if p.weapon.name not in allowed:
+                cls = WEAPON_REGISTRY.get(self._pick_random_allowed_weapon())
+                if cls:
+                    p.weapon = cls()
 
     def apply_input(self, pid: str, msg: dict) -> None:
         p = self.players.get(pid)
@@ -201,6 +277,14 @@ class GameEngine:
             return
         x, y = self._spawn_position()
         p.max_hp = self.settings.default_bot_hp if p.is_bot else self.settings.default_player_hp
+        # EN: Phase 10 — if the player's stored weapon was banned while they
+        #     were dead, swap to a legal one before they re-enter the arena.
+        # zh-TW: Phase 10 — 玩家死亡期間若武器被禁，重生前先替換為合法武器。
+        allowed = self._allowed_weapons_set()
+        if p.weapon.name not in allowed:
+            cls = WEAPON_REGISTRY.get(self._pick_random_allowed_weapon())
+            if cls:
+                p.weapon = cls()
         p.respawn(x, y)
 
     def request_spectate(self, pid: str) -> None:
@@ -345,6 +429,11 @@ class GameEngine:
             self._sync_team_mode()
         elif key in ("bots_enabled", "bot_count"):
             self._sync_standalone_bots()
+        elif key == "allowed_weapons":
+            # EN: Phase 10 mid-game override — reassign alive players whose
+            #     current weapon was just disabled.
+            # zh-TW: Phase 10 比賽中即時覆寫 — 把武器剛被禁掉的存活玩家改派。
+            self._sync_allowed_weapons()
 
     def _sync_team_mode(self) -> None:
         if self.settings.team_mode:
@@ -513,7 +602,14 @@ class GameEngine:
 
     @staticmethod
     def _bullet_short(b: Bullet) -> dict:
-        return {
+        # EN: Phase 10 — only emit bw/bh on the wire when the bullet hitbox
+        #     differs from the 6×6 default (rocket = 14×14). Keeps standard
+        #     bullets at the smallest payload while still letting clients
+        #     render heavy projectiles at the correct size.
+        # zh-TW: Phase 10 — 子彈的 bw/bh 只有在 hitbox 不是預設 6×6 時才送
+        #     （目前只有 rocket=14×14）。一般子彈仍維持最小封包，重型彈頭
+        #     也能在前端正確放大繪製。
+        d = {
             "i": b.id,
             "x": round(b.x, 2),
             "y": round(b.y, 2),
@@ -521,6 +617,10 @@ class GameEngine:
             "dm": b.damage,
             "al": 1 if b.alive else 0,
         }
+        if b.w != 6.0 or b.h != 6.0:
+            d["bw"] = b.w
+            d["bh"] = b.h
+        return d
 
     def snapshot(self) -> dict:
         # EN: Build the authoritative state snapshot broadcast each tick.
@@ -550,6 +650,7 @@ class GameEngine:
                 "bot_atk_speed_max": self.settings.bot_atk_speed_max,
                 "default_player_hp": self.settings.default_player_hp,
                 "default_bot_hp": self.settings.default_bot_hp,
+                "allowed_weapons": self.settings.allowed_weapons,
             },
             "go": self.game_over,
             "tr": time_remaining,
