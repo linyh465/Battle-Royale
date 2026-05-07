@@ -209,7 +209,7 @@ export default function AimJoystick({
           placeItems: "center",
         }}
       >
-        AIM
+        FIRE
       </div>
     </div>
   );
