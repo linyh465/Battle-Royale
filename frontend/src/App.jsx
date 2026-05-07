@@ -273,8 +273,9 @@ function Lobby({ wsUrl }) {
           {adminPasswordPending && <span className="br-badge br-badge--admin">{t.admin}</span>}
         </div>
 
-        {/* Language toggle — EN / 中文 / Tiếng Việt */}
-        <div className="br-lang-toggle" role="tablist" aria-label="Language" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {/* EN: Language toggle — EN / 中文 / Tiếng Việt (responsive, z-indexed)
+            zh-TW: 語言切換 — EN / 中文 / Tiếng Việt（響應式、高 z-index） */}
+        <div className="br-lang-area">
           <a
             href={`http://${location.hostname}:8001`}
             target="_blank"
@@ -284,17 +285,19 @@ function Lobby({ wsUrl }) {
           >
             【開發日誌】
           </a>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            {[
-              { id: "en", label: "EN" },
-              { id: "zh", label: "中" },
-              { id: "vi", label: "VN" },
-            ].map(({ id, label }) => (
-              <button key={id} role="tab" aria-selected={lang === id}
-                className={`br-lang-pill ${lang === id ? "is-active" : ""}`}
-                onClick={() => setLang(id)}
-              >{label}</button>
-            ))}
+          <div className="br-lang-toggle" role="tablist" aria-label="Language">
+            <div className="br-lang-pills">
+              {[
+                { id: "en", label: "EN" },
+                { id: "zh", label: "中" },
+                { id: "vi", label: "VN" },
+              ].map(({ id, label }) => (
+                <button key={id} role="tab" aria-selected={lang === id}
+                  className={`br-lang-pill ${lang === id ? "is-active" : ""}`}
+                  onClick={() => setLang(id)}
+                >{label}</button>
+              ))}
+            </div>
           </div>
         </div>
       </header>

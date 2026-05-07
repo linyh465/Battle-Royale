@@ -110,6 +110,12 @@ const TRANSLATIONS = {
     weaponArsenalHint: "Toggle which weapons players may pick. Disabling a weapon mid-match reassigns every alive player still holding it.",
     weaponDisabled: "Disabled by admin",
     locked: "LOCKED",
+    // Phase 11 — stress testing
+    stressTest: "SERVER STRESS TEST",
+    stressTestDesc: "Spawn simulated bots to stress-test the server. Bots auto-cleanup after the timer expires, freeing RAM/CPU.",
+    stressBotCount: "Bot Count",
+    stressDuration: "Duration (s)",
+    startStressTest: "START STRESS TEST",
   },
   zh: {
     // Lobby
@@ -220,6 +226,12 @@ const TRANSLATIONS = {
     weaponArsenalHint: "切換玩家可選的武器。比賽中關閉某把武器，所有持該武器的存活玩家會立即被隨機改派。",
     weaponDisabled: "管理員已停用",
     locked: "停用中",
+    // Phase 11 — 壓力測試
+    stressTest: "伺服器壓力測試",
+    stressTestDesc: "生成模擬 Bot 來壓測伺服器。計時器到期後 Bot 會自動清除，釋放 RAM/CPU。",
+    stressBotCount: "機器人數量",
+    stressDuration: "持續時間 (秒)",
+    startStressTest: "啟動壓力測試",
   },
   vi: {
     // Lobby
@@ -330,6 +342,12 @@ const TRANSLATIONS = {
     weaponArsenalHint: "Bật/tắt vũ khí người chơi được chọn. Tắt giữa trận sẽ đổi vũ khí của mọi người chơi còn sống.",
     weaponDisabled: "Đã bị admin tắt",
     locked: "ĐÃ KHÓA",
+    // Phase 11 — stress testing
+    stressTest: "KIỂM TRA TẢI",
+    stressTestDesc: "Tạo bot giả lập để kiểm tra tải server. Bot tự dọn sau khi hết giờ, giải phóng RAM/CPU.",
+    stressBotCount: "Số lượng Bot",
+    stressDuration: "Thời gian (s)",
+    startStressTest: "BẮT ĐẦU KIỂM TRA TẢI",
   },
 };
 

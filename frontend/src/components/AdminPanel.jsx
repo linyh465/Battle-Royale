@@ -47,6 +47,20 @@ export default function AdminPanel({ stateRef, send, onClose }) {
   const [, setTick] = useState(0);
   const [filter, setFilter] = useState("all");
   const [hpAllInput, setHpAllInput] = useState("");
+  // EN: Phase 11 — stress test controls.
+  // zh-TW: Phase 11 — 壓力測試控制項。
+  const [stressBotCount, setStressBotCount] = useState("50");
+  const [stressDuration, setStressDuration] = useState("60");
+
+  // EN: Phase 11 — optimistic local state for allowed_weapons. Prevents
+  //     rapid toggle clicks from clobbering each other via the 250 ms
+  //     server tick race. We only sync from server after 500 ms of
+  //     no local changes.
+  // zh-TW: Phase 11 — allowed_weapons 的樂觀本地 state。防止快速連點
+  //     因 250 ms 伺服器 tick 競態而互相覆蓋。只有本地 500 ms 沒改動後
+  //     才從伺服器同步。
+  const [localWeapons, setLocalWeapons] = useState(null);
+  const localWeaponsTimerRef = useRef(null);
 
   useEffect(() => {
     // EN: Roster + telemetry refresh. Inputs are insulated from this tick.
@@ -95,8 +109,13 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     setKey("leaderboard_columns", next.join(","));
   };
 
-  // ── Weapon allow-list toggles (Phase 10) ───────────────────────────────
-  const activeWeapons = (settings.allowed_weapons || ALL_WEAPONS.join(","))
+  // ── Weapon allow-list toggles (Phase 10, Phase 11 race-fix) ─────────────
+  // EN: Phase 11 — use localWeapons (optimistic) when available, otherwise
+  //     fall back to server state. This prevents rapid clicks from reading
+  //     stale server values between the 250 ms ticks.
+  // zh-TW: Phase 11 — 優先使用 localWeapons（樂觀值），否則退回伺服器
+  //     state。這避免了連點時讀到 250 ms tick 之間的舊伺服器值。
+  const activeWeapons = (localWeapons ?? settings.allowed_weapons ?? ALL_WEAPONS.join(","))
     .split(",").map(s => s.trim()).filter(Boolean);
   const toggleWeapon = (w) => {
     const set = new Set(activeWeapons);
@@ -108,7 +127,15 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     } else {
       set.add(w);
     }
-    setKey("allowed_weapons", [...set].join(","));
+    const csv = [...set].join(",");
+    // EN: Apply optimistically and send to server.
+    // zh-TW: 先樂觀套用再送伺服器。
+    setLocalWeapons(csv);
+    setKey("allowed_weapons", csv);
+    // EN: Clear the sync-back timer; restart 500 ms countdown.
+    // zh-TW: 清除同步計時器，重新啟動 500 ms 倒數。
+    if (localWeaponsTimerRef.current) clearTimeout(localWeaponsTimerRef.current);
+    localWeaponsTimerRef.current = setTimeout(() => setLocalWeapons(null), 500);
   };
 
   return (
@@ -459,6 +486,41 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               onClick={() => {
                 if (window.confirm(`${t.endGameNow}?`)) send({ type: "admin_end_game_now" });
               }}>{t.endGameNow}</button>
+          </div>
+
+          {/* EN: Phase 11 — Server Stress Test section.
+              zh-TW: Phase 11 — 伺服器壓力測試區塊。 */}
+          <div className="br-glass br-glass--danger br-danger-card">
+            <PanelHead title={t.stressTest} small />
+            <p className="br-mute" style={{ fontSize: 11, margin: "4px 0 8px", lineHeight: 1.5 }}>
+              {t.stressTestDesc}
+            </p>
+            <NumSetting
+              label={t.stressBotCount}
+              serverValue={parseInt(stressBotCount, 10)}
+              fallback={50}
+              min={1} max={100} step={1}
+              integer
+              onCommit={(v) => setStressBotCount(String(v))}
+            />
+            <NumSetting
+              label={t.stressDuration}
+              serverValue={parseInt(stressDuration, 10)}
+              fallback={60}
+              min={5} max={600} step={5}
+              integer
+              onCommit={(v) => setStressDuration(String(v))}
+            />
+            <button className="br-btn br-btn--danger"
+              onClick={() => {
+                const count = parseInt(stressBotCount, 10) || 50;
+                const dur = parseInt(stressDuration, 10) || 60;
+                if (window.confirm(`${t.startStressTest}? (${count} bots × ${dur}s)`)) {
+                  send({ type: "admin_stress_test", bot_count: count, duration_seconds: dur });
+                }
+              }}>
+              {t.startStressTest}
+            </button>
           </div>
         </section>
       </div>

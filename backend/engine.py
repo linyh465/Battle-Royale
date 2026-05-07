@@ -128,6 +128,13 @@ class GameEngine:
         self.reset_seq: int = 0
         self._standalone_bot_ids: Set[str] = set()
 
+        # EN: Phase 11 — stress test tracking. Stores IDs of bots spawned by
+        #     the admin stress test and a reference to the cleanup task.
+        # zh-TW: Phase 11 — 壓力測試追蹤。儲存由管理員壓測生成的 Bot ID
+        #     以及清理任務的參照。
+        self._stress_test_bot_ids: Set[str] = set()
+        self._stress_cleanup_task: asyncio.Task | None = None
+
         # EN: Wake-up event used by run() to sleep the simulation loop while
         #     idle (no players). Created lazily inside run() to bind to the
         #     correct asyncio loop.
@@ -353,6 +360,65 @@ class GameEngine:
             self.players.pop(pid, None)
             self.connections.pop(pid, None)
             self._standalone_bot_ids.discard(pid)
+            self._stress_test_bot_ids.discard(pid)
+
+    # ──────────── Stress testing / 壓力測試 ────────────
+    def stress_test_start(self, bot_count: int, duration_seconds: float) -> None:
+        """EN: Instantly spawn `bot_count` stress-test bots and schedule an
+           asyncio background task to auto-remove them after `duration_seconds`.
+           Capped at 100 bots to prevent OOM on limited Railway tiers.
+           zh-TW: 立即生成 `bot_count` 個壓測 Bot，並排程 asyncio 背景任務，
+           在 `duration_seconds` 秒後自動移除。上限 100 個以避免 Railway 低階方案 OOM。"""
+        # EN: Clamp inputs for safety.
+        # zh-TW: 限制輸入值以確保安全。
+        bot_count = max(1, min(100, int(bot_count)))
+        duration_seconds = max(5.0, min(600.0, float(duration_seconds)))
+
+        # EN: Cancel any existing stress-test cleanup task.
+        # zh-TW: 取消任何現有的壓測清理任務。
+        if self._stress_cleanup_task and not self._stress_cleanup_task.done():
+            self._stress_cleanup_task.cancel()
+
+        # EN: Spawn bots.
+        # zh-TW: 生成 Bot。
+        new_ids: Set[str] = set()
+        for _ in range(bot_count):
+            bot = self.add_bot()
+            bot.max_hp = self.settings.default_bot_hp
+            bot.hp = bot.max_hp
+            new_ids.add(bot.id)
+        self._stress_test_bot_ids |= new_ids
+
+        # EN: Spawn background cleanup task.
+        # zh-TW: 生成背景清理任務。
+        self._stress_cleanup_task = asyncio.create_task(
+            self._stress_test_cleanup(new_ids, duration_seconds)
+        )
+
+    async def _stress_test_cleanup(
+        self, bot_ids: Set[str], delay: float
+    ) -> None:
+        """EN: Background task — waits `delay` seconds then removes all
+           stress-test bots, freeing RAM/CPU. If the task is cancelled
+           (e.g. a new stress test starts), the bots from this batch
+           are cleaned up immediately.
+           zh-TW: 背景任務 — 等待 `delay` 秒後移除所有壓測 Bot，釋放 RAM/CPU。
+           若任務被取消（例如新的壓測啟動），此批次的 Bot 會立即清除。"""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # EN: Remove stress-test bots and their bullets.
+            # zh-TW: 移除壓測 Bot 及其子彈。
+            for pid in list(bot_ids):
+                self.players.pop(pid, None)
+                self.connections.pop(pid, None)
+                self._stress_test_bot_ids.discard(pid)
+            # EN: Eagerly purge bullets owned by removed bots (GC tightening).
+            # zh-TW: 立即清除已移除 Bot 的子彈（GC 強化）。
+            if self.bullets:
+                self.bullets = [b for b in self.bullets if b.owner_id not in bot_ids]
 
     def admin_set_game_timer(self, seconds: float) -> None:
         now = time.perf_counter()

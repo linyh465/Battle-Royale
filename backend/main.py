@@ -222,6 +222,12 @@ async def ws_endpoint(ws: WebSocket):
                     new_pw = str(msg.get("value", "")).strip()
                     if new_pw:
                         engine.settings.admin_password = new_pw
+                # EN: Phase 11 — admin-controlled stress test.
+                # zh-TW: Phase 11 — 管理員控制的壓力測試。
+                elif mtype == "admin_stress_test":
+                    bot_count = int(msg.get("bot_count", 50))
+                    duration = float(msg.get("duration_seconds", 60))
+                    engine.stress_test_start(bot_count, duration)
                 elif mtype == "ping":
                     await ws.send_text(json.dumps({"type": "pong", "t": msg.get("t")}))
         except WebSocketDisconnect:
@@ -307,6 +313,12 @@ async def ws_endpoint(ws: WebSocket):
                 new_pw = str(msg.get("value", "")).strip()
                 if new_pw:
                     engine.settings.admin_password = new_pw
+            # EN: Phase 11 — admin-controlled stress test (legacy path).
+            # zh-TW: Phase 11 — 管理員控制的壓力測試（舊式路徑）。
+            elif mtype == "admin_stress_test" and is_admin:
+                bot_count = int(msg.get("bot_count", 50))
+                duration = float(msg.get("duration_seconds", 60))
+                engine.stress_test_start(bot_count, duration)
             elif mtype == "ping":
                 await ws.send_text(json.dumps({"type": "pong", "t": msg.get("t")}))
     except WebSocketDisconnect:
