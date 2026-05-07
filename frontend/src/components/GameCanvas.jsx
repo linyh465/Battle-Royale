@@ -347,7 +347,16 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
     const frozen = Array.isArray(snap.frozen_leaderboard) && snap.frozen_leaderboard.length > 0
       ? snap.frozen_leaderboard
       : (snap.players || []);
-    return { players: frozen, columns: cols };
+    return {
+      players: frozen,
+      columns: cols,
+      // EN: Phase 18 — pass active leaderboard type + sandbox toggle to the
+      //     FullLeaderboard so it can render only the selected category and
+      //     conditionally disable the Close button.
+      // zh-TW: Phase 18 — 傳遞排行榜類別與沙盒開關給 FullLeaderboard。
+      activeType: snap.active_leaderboard_type || "kills",
+      sandboxEnabled: snap.sandbox_enabled !== undefined ? snap.sandbox_enabled : true,
+    };
   })();
 
   // EN: Phase 17 — derive pause values from React state (driven by the
@@ -356,6 +365,11 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   //     確保覆蓋層反應式顯示。
   const isPaused = pauseState.paused;
   const pauseMsg = pauseState.message;
+
+  // EN: Phase 18 — when the final leaderboard is showing, suppress the
+  //     DeathScreen so dead players see the standings, not the death overlay.
+  // zh-TW: Phase 18 — 最終排行榜顯示時隱藏死亡畫面，讓陣亡玩家看到排行榜。
+  const leaderboardVisible = showFinalBoard && finalBoardData;
 
   return (
     <>
@@ -369,7 +383,10 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         />
       )}
 
-      {overlay.meState === "dead" && !isPaused && (
+      {/* EN: Phase 18 — DeathScreen is HIDDEN when the final leaderboard is
+              visible, so dead players always see the standings overlay.
+          zh-TW: Phase 18 — 最終排行榜可見時隱藏死亡畫面。 */}
+      {overlay.meState === "dead" && !isPaused && !leaderboardVisible && (
         <DeathScreen
           respawnRemaining={overlay.respawnRemaining}
           canRespawn={overlay.canRespawn}
@@ -407,13 +424,11 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         </div>
       )}
 
-      {/* EN: Phase 15 — full-list scrollable leaderboard with local-player
-              glow. Shown when the user opens it during POST_GAME (auto on
-              transition; manual via the "scoreboard" key in future). The
-              "Close" button returns to the canvas (sandbox brawl).
-          zh-TW: Phase 15 — 全玩家可捲動排行榜，本地玩家列發光高亮。
-              POST_GAME 自動彈出；按下「關閉」即可回到畫布繼續沙盒對戰。 */}
-      {showFinalBoard && finalBoardData && (
+      {/* EN: Phase 18 — FullLeaderboard with z-index 500 strictly overrides
+              the DeathScreen. Renders 4-category tabs and sandbox lock.
+          zh-TW: Phase 18 — FullLeaderboard z-index 500 嚴格覆蓋死亡畫面。
+              包含 4 類排行榜頁籤與沙盒鎖定。 */}
+      {leaderboardVisible && (
         <FullLeaderboard
           data={finalBoardData}
           t={t}
@@ -424,10 +439,8 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
 
       {resetNotice && <ResetNotice label={t.matchResetNotice} />}
 
-      {/* EN: Phase 17 — full-screen unclosable pause overlay. Rendered LAST so
-              its z-index naturally sits above every other overlay.
-          zh-TW: Phase 17 — 全螢幕不可關閉的暫停覆蓋層。放在最後渲染，
-              z-index 自然高過其他所有覆蓋層。 */}
+      {/* EN: Phase 17 — full-screen unclosable pause overlay.
+          zh-TW: Phase 17 — 全螢幕不可關閉的暫停覆蓋層。 */}
       {isPaused && <PauseOverlay message={pauseMsg} t={t} />}
     </>
   );
@@ -536,19 +549,28 @@ function PauseOverlay({ message, t }) {
 //     • 本地玩家列以青色發光邊框高亮。
 //     • 按「關閉」即可回到畫布繼續沙盒對戰。
 export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
-  const { players, columns } = data;
-  const colLabels = {
-    kills: t.kills,
-    deaths: t.deaths,
-    damage_dealt: t.damageDealt,
-    damage_taken: t.damageTaken,
-  };
-  const primary = columns[0] || "kills";
-  const sorted = [...players].sort((a, b) => (b[primary] ?? 0) - (a[primary] ?? 0));
+  const { players, activeType, sandboxEnabled } = data;
+
+  // EN: Phase 18 — 4 leaderboard categories. The admin picks which one is
+  //     visible via `active_leaderboard_type`. Each tab maps to a player
+  //     stat key and a display label.
+  // zh-TW: Phase 18 — 4 種排行榜類別。管理員透過 `active_leaderboard_type`
+  //     選擇顯示哪個。每個頁籤對應一個玩家統計鍵與顯示標籤。
+  const categories = [
+    { key: "kills",        label: t.lbKills },
+    { key: "deaths",       label: t.lbDeaths },
+    { key: "damage_dealt", label: t.lbDamageDealt },
+    { key: "damage_taken", label: t.lbDamageTaken },
+  ];
+
+  const current = categories.find(c => c.key === activeType) || categories[0];
+  const sorted = [...players].sort((a, b) => (b[current.key] ?? 0) - (a[current.key] ?? 0));
+
+  const closeLocked = !sandboxEnabled;
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 200,
+      position: "fixed", inset: 0, zIndex: 500,
       background: "rgba(3,6,13,0.93)",
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "flex-start",
@@ -568,17 +590,39 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
       }}>
         {t.finalLeaderboard}
       </div>
+
+      {/* EN: Phase 18 — category tab bar. Only the admin-selected tab glows;
+              players see which leaderboard is active but cannot switch.
+          zh-TW: Phase 18 — 類別頁籤列。僅管理員選中的頁籤發光；
+              玩家可見目前是哪個排行榜，但無法自行切換。 */}
       <div style={{
-        fontFamily: "var(--br-mono)", fontSize: "clamp(10px,2vw,12px)",
-        color: "#22d3ee", marginBottom: 12, flexShrink: 0,
+        display: "flex", gap: 6, marginBottom: 12, flexShrink: 0,
+        flexWrap: "wrap", justifyContent: "center",
       }}>
-        ◆ {t.postGame} — {t.postGameHint}
+        {categories.map(cat => {
+          const isActive = cat.key === current.key;
+          return (
+            <span key={cat.key} style={{
+              padding: "4px 16px", borderRadius: 6,
+              fontFamily: "var(--br-mono)", fontSize: "clamp(10px,2.5vw,12px)",
+              fontWeight: 700, letterSpacing: "0.15em",
+              color: isActive ? "#22d3ee" : "#5a6b8a",
+              background: isActive ? "rgba(34,211,238,0.15)" : "rgba(110,145,200,0.06)",
+              border: isActive ? "1px solid rgba(34,211,238,0.5)" : "1px solid rgba(110,145,200,0.12)",
+              boxShadow: isActive ? "0 0 12px rgba(34,211,238,0.3)" : "none",
+              cursor: "default",
+              transition: "all 0.2s ease",
+            }}>
+              {cat.label}
+            </span>
+          );
+        })}
       </div>
 
-      {/* EN: Scroll container — `overflow-y-auto` is the key requirement.
-          zh-TW: 可捲動容器 — `overflow-y-auto` 是 Phase 15 的硬性要求。 */}
+      {/* EN: Scroll container — single-column leaderboard for the active category.
+          zh-TW: 可捲動容器 — 僅顯示當前選中類別的單欄排行榜。 */}
       <div style={{
-        width: "100%", maxWidth: "min(98vw, 880px)",
+        width: "100%", maxWidth: "min(98vw, 600px)",
         background: "rgba(10,18,38,0.9)",
         border: "1px solid rgba(110,145,200,0.2)",
         borderRadius: 10, overflow: "hidden",
@@ -587,7 +631,7 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
       }}>
         <div style={{
           display: "grid",
-          gridTemplateColumns: `40px 1fr ${columns.map(() => "72px").join(" ")}`,
+          gridTemplateColumns: "40px 1fr 80px",
           padding: "8px 12px",
           background: "rgba(34,211,238,0.08)",
           borderBottom: "1px solid rgba(110,145,200,0.2)",
@@ -597,24 +641,18 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
         }}>
           <span>#</span>
           <span>NAME</span>
-          {columns.map(c => (
-            <span key={c} style={{ textAlign: "right", color: "#22d3ee" }}>
-              {(colLabels[c] || c).slice(0, 6).toUpperCase()}
-            </span>
-          ))}
+          <span style={{ textAlign: "right", color: "#22d3ee" }}>
+            {current.label}
+          </span>
         </div>
 
-        <div style={{
-          overflowY: "auto",
-          flex: "1 1 auto",
-          minHeight: 0,
-        }}>
+        <div style={{ overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
           {sorted.map((p, i) => {
             const isMe = localPlayerId && p.id === localPlayerId;
             return (
               <div key={p.id} style={{
                 display: "grid",
-                gridTemplateColumns: `40px 1fr ${columns.map(() => "72px").join(" ")}`,
+                gridTemplateColumns: "40px 1fr 80px",
                 padding: "8px 12px",
                 borderBottom: "1px solid rgba(110,145,200,0.06)",
                 fontFamily: "var(--br-font)", fontSize: 13,
@@ -625,7 +663,6 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
                 boxShadow: isMe
                   ? "inset 0 0 0 2px rgba(34,211,238,0.85), 0 0 18px rgba(34,211,238,0.45)"
                   : "none",
-                position: "relative",
               }}>
                 <span style={{ fontFamily: "var(--br-mono)", color: "#5a6b8a", fontSize: 11 }}>
                   {String(i + 1).padStart(2, "0")}
@@ -641,47 +678,47 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
                     </span>
                   )}
                 </span>
-                {columns.map(c => (
-                  <span key={c} style={{
-                    textAlign: "right", fontFamily: "var(--br-mono)", fontSize: 12,
-                    color: c === primary ? "#22d3ee" : "#91a3c4",
-                  }}>
-                    {typeof p[c] === "number" ? Math.round(p[c]) : (p[c] ?? 0)}
-                  </span>
-                ))}
+                <span style={{
+                  textAlign: "right", fontFamily: "var(--br-mono)", fontSize: 12,
+                  color: "#22d3ee",
+                }}>
+                  {typeof p[current.key] === "number" ? Math.round(p[current.key]) : (p[current.key] ?? 0)}
+                </span>
               </div>
             );
           })}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 12, marginTop: 16, flexShrink: 0 }}>
+      {/* EN: Phase 18 — only the "Close" button remains. When sandbox is
+              disabled by admin, the button is grayed out and unclickable.
+          zh-TW: Phase 18 — 僅保留「關閉」按鈕。管理員停用沙盒時按鈕灰化不可點。 */}
+      <div style={{ display: "flex", gap: 12, marginTop: 16, flexShrink: 0, flexDirection: "column", alignItems: "center" }}>
         <button
           style={{
             padding: "10px 36px",
-            background: "rgba(34,211,238,0.12)",
-            border: "1px solid rgba(34,211,238,0.4)",
-            borderRadius: 8, color: "#22d3ee",
+            background: closeLocked ? "rgba(110,145,200,0.06)" : "rgba(34,211,238,0.12)",
+            border: closeLocked ? "1px solid rgba(110,145,200,0.15)" : "1px solid rgba(34,211,238,0.4)",
+            borderRadius: 8,
+            color: closeLocked ? "#5a6b8a" : "#22d3ee",
             fontFamily: "var(--br-display)", fontWeight: 700,
-            fontSize: 14, letterSpacing: "0.2em", cursor: "pointer",
+            fontSize: 14, letterSpacing: "0.2em",
+            cursor: closeLocked ? "not-allowed" : "pointer",
+            opacity: closeLocked ? 0.5 : 1,
           }}
-          onClick={onClose}
+          disabled={closeLocked}
+          onClick={closeLocked ? undefined : onClose}
         >
           {t.close}
         </button>
-        <button
-          style={{
-            padding: "10px 36px",
-            background: "rgba(34,197,94,0.12)",
-            border: "1px solid rgba(34,197,94,0.4)",
-            borderRadius: 8, color: "#22c55e",
-            fontFamily: "var(--br-display)", fontWeight: 700,
-            fontSize: 14, letterSpacing: "0.2em", cursor: "pointer",
-          }}
-          onClick={onClose}
-        >
-          ▸ {t.backToFight}
-        </button>
+        {closeLocked && (
+          <span style={{
+            fontFamily: "var(--br-mono)", fontSize: 11, color: "#ff7a8e",
+            letterSpacing: "0.12em",
+          }}>
+            🔒 {t.sandboxLocked}
+          </span>
+        )}
       </div>
     </div>
   );

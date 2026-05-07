@@ -137,6 +137,11 @@ export default function expandSnapshot(msg) {
     // zh-TW: Phase 17 — 全域暫停狀態，提升至頂層方便快速存取。
     match_paused: !!st.match_paused,
     pause_message: st.pause_message || "",
+    // EN: Phase 18 — active leaderboard type + sandbox toggle, promoted to
+    //     top-level so GameCanvas / FullLeaderboard can consume directly.
+    // zh-TW: Phase 18 — 排行榜類別 + 沙盒開關，提升至頂層方便元件存取。
+    active_leaderboard_type: st.active_leaderboard_type || "kills",
+    sandbox_enabled: st.sandbox_enabled !== undefined ? !!st.sandbox_enabled : true,
     players,
     bullets,
   };

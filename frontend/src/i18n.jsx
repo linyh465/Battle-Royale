@@ -146,6 +146,15 @@ const TRANSLATIONS = {
     // Phase 17 — HUD Match Stats
     hudKills: "Kills",
     hudDeaths: "Deaths",
+    // Phase 18 — Leaderboard category tabs
+    lbKills: "KILLS",
+    lbDeaths: "DEATHS",
+    lbDamageDealt: "DAMAGE",
+    lbDamageTaken: "TAKEN",
+    leaderboardType: "Leaderboard View",
+    sandboxToggle: "Post-Game Sandbox",
+    sandboxToggleZh: "賽後沙盒功能",
+    sandboxLocked: "Sandbox locked by admin",
   },
   zh: {
     // Lobby
@@ -292,6 +301,15 @@ const TRANSLATIONS = {
     // Phase 17 — HUD 比賽統計
     hudKills: "擊殺",
     hudDeaths: "死亡",
+    // Phase 18 — 排行榜類別頁籤
+    lbKills: "擊殺",
+    lbDeaths: "死亡",
+    lbDamageDealt: "傷害",
+    lbDamageTaken: "承傷",
+    leaderboardType: "排行榜顯示類別",
+    sandboxToggle: "賽後沙盒功能",
+    sandboxToggleZh: "Post-Game Sandbox",
+    sandboxLocked: "沙盒已被管理員鎖定",
   },
   vi: {
     // Lobby
@@ -438,6 +456,15 @@ const TRANSLATIONS = {
     // Phase 17 — HUD thống kê
     hudKills: "Tiêu diệt",
     hudDeaths: "Tử vong",
+    // Phase 18 — Leaderboard category tabs
+    lbKills: "TIÊU DIỆT",
+    lbDeaths: "TỬ VONG",
+    lbDamageDealt: "SÁT THƯƠNG",
+    lbDamageTaken: "NHẬN ST",
+    leaderboardType: "Bảng xếp hạng",
+    sandboxToggle: "Sandbox hậu trận",
+    sandboxToggleZh: "Post-Game Sandbox",
+    sandboxLocked: "Sandbox bị admin khóa",
   },
 };
 

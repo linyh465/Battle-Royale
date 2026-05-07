@@ -44,39 +44,35 @@ export default function DeathScreen({
           </h1>
         </div>
 
-        {/* Kill card */}
-        <div className="br-death-killcard" style={{ marginBottom: "clamp(12px, 3vh, 20px)" }}>
-          <span className="br-death-kc-label" style={{ fontSize: "clamp(9px, 2vw, 11px)" }}>
-            {t.eliminatedBy}
-          </span>
-          <div className="br-death-kc-row" style={{ gap: "clamp(6px, 2vw, 12px)", flexWrap: "wrap" }}>
-            <KillerSkull />
-            <div className="br-death-kc-name" style={{ fontSize: "clamp(14px, 4vw, 20px)" }}>
-              {displayKiller}
-            </div>
-            <div className="br-death-kc-weapon" style={{ fontSize: "clamp(10px, 2.5vw, 13px)" }}>
-              {killerWeapon.toUpperCase()}
-            </div>
-          </div>
-        </div>
-
-        {/* Action buttons — use row on large screens, column on tiny screens */}
+        {/* EN: Phase 18 — Action buttons ABOVE the kill card for better UX.
+                Reduced padding-y for thinner buttons.
+            zh-TW: Phase 18 — 動作按鈕移到擊殺資訊「上方」，改善 UX。
+                減少垂直內距讓按鈕更薄。 */}
         <div className="br-death-actions" style={{
           display: "flex",
           flexDirection: "row",
           flexWrap: "wrap",
           gap: "clamp(8px, 2vw, 14px)",
           justifyContent: "center",
+          alignItems: "center",
           marginBottom: "clamp(8px, 2vh, 16px)",
         }}>
-          {/* Respawn button with countdown ring */}
+          {/* Respawn button with countdown ring — centered via flexbox */}
           <button
             className={`br-death-btn br-death-btn--respawn ${canRespawn ? "is-ready" : "is-cooling"}`}
             onClick={canRespawn ? onRespawn : undefined}
             disabled={!canRespawn}
-            style={{ flex: "1 1 120px", minWidth: 100, maxWidth: 180 }}
+            style={{
+              flex: "1 1 120px", minWidth: 100, maxWidth: 180,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              padding: "clamp(4px, 1vh, 8px) clamp(8px, 2vw, 16px)",
+            }}
           >
-            <span className="br-death-btn-ring" aria-hidden style={{ width: "clamp(80px, 18vw, 128px)", height: "clamp(80px, 18vw, 128px)" }}>
+            <span className="br-death-btn-ring" aria-hidden style={{
+              width: "clamp(64px, 14vw, 96px)", height: "clamp(64px, 14vw, 96px)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
               <svg viewBox="0 0 108 108" width="100%" height="100%">
                 <circle cx="54" cy="54" r={R} stroke="rgba(34,211,238,0.18)" strokeWidth="3" fill="none" />
                 <circle
@@ -90,7 +86,10 @@ export default function DeathScreen({
                 />
               </svg>
             </span>
-            <span className="br-death-btn-inner">
+            <span className="br-death-btn-inner" style={{
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+            }}>
               {canRespawn ? (
                 <>
                   <span className="br-death-btn-icon">▸</span>
@@ -100,10 +99,10 @@ export default function DeathScreen({
                 </>
               ) : (
                 <>
-                  <span className="br-death-btn-count" style={{ fontSize: "clamp(18px, 5vw, 28px)" }}>
+                  <span className="br-death-btn-count" style={{ fontSize: "clamp(16px, 4vw, 24px)" }}>
                     {seconds}
                   </span>
-                  <span className="br-death-btn-label" style={{ fontSize: "clamp(10px, 2.5vw, 13px)" }}>
+                  <span className="br-death-btn-label" style={{ fontSize: "clamp(10px, 2.5vw, 12px)" }}>
                     {t.cooldown}
                   </span>
                 </>
@@ -111,11 +110,14 @@ export default function DeathScreen({
             </span>
           </button>
 
-          {/* Spectate button */}
+          {/* Spectate button — thinner padding */}
           <button
             className="br-death-btn br-death-btn--spectate"
             onClick={onSpectate}
-            style={{ flex: "1 1 120px", minWidth: 100, maxWidth: 180 }}
+            style={{
+              flex: "1 1 120px", minWidth: 100, maxWidth: 180,
+              padding: "clamp(4px, 1vh, 8px) clamp(8px, 2vw, 16px)",
+            }}
           >
             <span className="br-death-btn-inner">
               <span className="br-death-btn-icon">
@@ -129,6 +131,22 @@ export default function DeathScreen({
               </span>
             </span>
           </button>
+        </div>
+
+        {/* Kill card — now BELOW the action buttons */}
+        <div className="br-death-killcard" style={{ marginBottom: "clamp(8px, 2vh, 12px)" }}>
+          <span className="br-death-kc-label" style={{ fontSize: "clamp(9px, 2vw, 11px)" }}>
+            {t.eliminatedBy}
+          </span>
+          <div className="br-death-kc-row" style={{ gap: "clamp(6px, 2vw, 12px)", flexWrap: "wrap" }}>
+            <KillerSkull />
+            <div className="br-death-kc-name" style={{ fontSize: "clamp(14px, 4vw, 20px)" }}>
+              {displayKiller}
+            </div>
+            <div className="br-death-kc-weapon" style={{ fontSize: "clamp(10px, 2.5vw, 13px)" }}>
+              {killerWeapon.toUpperCase()}
+            </div>
+          </div>
         </div>
 
         <p className="br-death-foot" style={{ fontSize: "clamp(10px, 2.5vw, 12px)", textAlign: "center" }}>

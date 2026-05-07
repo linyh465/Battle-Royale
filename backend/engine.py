@@ -97,6 +97,18 @@ class GameSettings:
     bot_count: int = 0
     bot_max_attack_limit: int = 2
     allowed_weapons: str = DEFAULT_ALLOWED_WEAPONS
+    # EN: Phase 18 — admin-selectable leaderboard category. The frontend
+    #     renders ONLY this category in the FullLeaderboard overlay.
+    #     Allowed values: "kills", "deaths", "damage_dealt", "damage_taken".
+    # zh-TW: Phase 18 — 管理員可選的排行榜類別。前端在 FullLeaderboard
+    #     覆蓋層中僅顯示該類別。允許值：kills / deaths / damage_dealt / damage_taken。
+    active_leaderboard_type: str = "kills"
+    # EN: Phase 18 — sandbox toggle. When False, the "Close" button on the
+    #     POST_GAME leaderboard is disabled, preventing players from entering
+    #     the sandbox brawl. Default True = sandbox allowed.
+    # zh-TW: Phase 18 — 沙盒開關。為 False 時，POST_GAME 排行榜上的「關閉」
+    #     按鈕會被停用，玩家無法進入沙盒對戰。預設 True = 允許沙盒。
+    sandbox_enabled: bool = True
     # EN: Phase 17 — admin-controlled global pause. When True the entire match
     #     freezes; the frontend renders an unclosable overlay and blocks input.
     # zh-TW: Phase 17 — 管理員控制的全域暫停。為 True 時整場比賽凍結；
@@ -778,6 +790,8 @@ class GameEngine:
                 "default_bot_hp": self.settings.default_bot_hp,
                 "allowed_weapons": self.settings.allowed_weapons,
                 "bot_max_attack_limit": self.settings.bot_max_attack_limit,
+                "active_leaderboard_type": self.settings.active_leaderboard_type,
+                "sandbox_enabled": self.settings.sandbox_enabled,
                 "match_paused": self.settings.match_paused,
                 "pause_message": self.settings.pause_message,
             },

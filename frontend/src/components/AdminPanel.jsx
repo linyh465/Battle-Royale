@@ -263,6 +263,31 @@ export default function AdminPanel({ stateRef, send, onClose }) {
             </select>
           </div>
 
+          {/* EN: Phase 18 — admin selects which leaderboard category is shown
+                  on the POST_GAME overlay. Players see only this category.
+              zh-TW: Phase 18 — 管理員選擇 POST_GAME 排行榜覆蓋層顯示的類別。
+                  玩家只能看到這個類別。 */}
+          <div className="br-field">
+            <label className="br-field-label">{t.leaderboardType}</label>
+            <select className="br-select"
+              value={liveSetting("active_leaderboard_type", "kills")}
+              onChange={(e) => setKey("active_leaderboard_type", e.target.value)}>
+              <option value="kills">{t.lbKills}</option>
+              <option value="deaths">{t.lbDeaths}</option>
+              <option value="damage_dealt">{t.lbDamageDealt}</option>
+              <option value="damage_taken">{t.lbDamageTaken}</option>
+            </select>
+          </div>
+
+          {/* EN: Phase 18 — sandbox toggle. When OFF, players cannot dismiss
+                  the POST_GAME leaderboard (Close button is disabled).
+              zh-TW: Phase 18 — 沙盒開關。關閉時，玩家無法關閉 POST_GAME
+                  排行榜（關閉按鈕被停用）。 */}
+          <div className="br-field">
+            <label className="br-field-label">{t.sandboxToggle} ({t.sandboxToggleZh})</label>
+            <Toggle checked={!!liveSetting("sandbox_enabled", true)} onChange={(v) => setKey("sandbox_enabled", v)} />
+          </div>
+
           <NumSetting
             label={t.baseRespawn}
             serverValue={settings.base_respawn_time}
