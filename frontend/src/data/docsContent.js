@@ -131,7 +131,7 @@ const docsContent = {
           {
             heading: "01 / ENTERING THE COMMAND CENTER",
             body: [
-              "Tap the lobby logo five times within 1.5 seconds, then enter the admin password (default: 0909).",
+              "Tap the lobby logo five times within 1.5 seconds, then enter the admin password (default: "Secret").",
               "The admin connection is a non-combatant WebSocket — opening the panel never spawns a player into the world.",
             ],
           },
@@ -321,7 +321,7 @@ const docsContent = {
           {
             heading: "01 / 進入管理員指揮中心",
             body: [
-              "於 1.5 秒內連點大廳 LOGO 五下，輸入管理員密碼（預設：0909）即可進入。",
+              "於 1.5 秒內連點大廳 LOGO 五下，輸入管理員密碼（預設：祕密不能告訴你TT）即可進入。",
               "管理員連線為非戰鬥員 WebSocket — 開啟管理員面板「不會」於戰場生成玩家。",
             ],
           },
