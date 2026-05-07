@@ -119,6 +119,25 @@ const TRANSLATIONS = {
     returnLobby: "RETURN TO LOBBY",
     openDocs: "OPERATOR MANUAL",
     devLog: "DEV LOG",
+    // Phase 15 — In-game HUD (the only 5 items shown top-right)
+    hudPlayer: "Player",
+    hudAlive: "Alive",
+    hudDead: "Awaiting Respawn",
+    hudHp: "HP",
+    hudWeapon: "Weapon",
+    // Phase 15 — Post-Game Sandbox Brawl
+    postGame: "POST-GAME · SANDBOX BRAWL",
+    postGameHint: "The leaderboard is frozen. Keep fighting in sandbox mode!",
+    backToFight: "RETURN TO FIGHT",
+    // Phase 15 — Admin device tracking
+    adminDevice: "Device",
+    adminIp: "IP",
+    adminUserAgent: "User-Agent",
+    // Phase 15 — Native Docs SPA
+    docsTitle: "Operator Manual",
+    docsBack: "BACK TO LOBBY",
+    docsLangEn: "English",
+    docsLangZh: "繁體中文",
   },
   zh: {
     // Lobby
@@ -238,6 +257,25 @@ const TRANSLATIONS = {
     returnLobby: "返回大廳",
     openDocs: "操作手冊",
     devLog: "開發日誌",
+    // Phase 15 — 遊戲內 HUD（右上角僅顯示這 5 項）
+    hudPlayer: "玩家",
+    hudAlive: "存活人數",
+    hudDead: "等待復活",
+    hudHp: "血量",
+    hudWeapon: "目前武器",
+    // Phase 15 — 賽後沙盒對戰
+    postGame: "賽後沙盒對戰",
+    postGameHint: "排行榜已凍結，可繼續沙盒對戰！",
+    backToFight: "返回戰場",
+    // Phase 15 — 管理員設備追蹤
+    adminDevice: "設備",
+    adminIp: "IP",
+    adminUserAgent: "User-Agent",
+    // Phase 15 — 原生 Docs SPA
+    docsTitle: "操作手冊",
+    docsBack: "返回大廳",
+    docsLangEn: "English",
+    docsLangZh: "繁體中文",
   },
   vi: {
     // Lobby
@@ -357,6 +395,25 @@ const TRANSLATIONS = {
     returnLobby: "VỀ SẢNH",
     openDocs: "SỔ TAY VẬN HÀNH",
     devLog: "NHẬT KÝ DEV",
+    // Phase 15 — HUD trong game
+    hudPlayer: "Người chơi",
+    hudAlive: "Còn sống",
+    hudDead: "Chờ hồi sinh",
+    hudHp: "HP",
+    hudWeapon: "Vũ khí",
+    // Phase 15 — Hậu trận
+    postGame: "HẬU TRẬN · SANDBOX",
+    postGameHint: "BXH đã đóng băng. Vẫn có thể tiếp tục chiến!",
+    backToFight: "TRỞ LẠI CHIẾN ĐẤU",
+    // Phase 15 — Theo dõi thiết bị admin
+    adminDevice: "Thiết bị",
+    adminIp: "IP",
+    adminUserAgent: "User-Agent",
+    // Phase 15 — Docs SPA
+    docsTitle: "Sổ tay vận hành",
+    docsBack: "VỀ SẢNH",
+    docsLangEn: "English",
+    docsLangZh: "繁體中文",
   },
 };
 

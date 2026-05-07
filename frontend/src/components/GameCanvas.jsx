@@ -9,7 +9,7 @@ const INPUT_DT = 1000 / INPUT_HZ;
 const MINIMAP_SIZE = 180;
 const PAD = 12;
 const THREAT_DOT_THRESHOLD = 0.985;
-const THREAT_RANGE = 760; // doubled from 380
+const THREAT_RANGE = 760;
 
 const IS_COARSE = typeof window !== "undefined"
   && (window.matchMedia?.("(pointer: coarse)")?.matches || "ontouchstart" in window);
@@ -26,11 +26,21 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
     killerWeapon: "rifle",
   });
 
-  const [gameOverData, setGameOverData] = useState(null);
+  // EN: Phase 15 — postGame UI state. The leaderboard panel is OPEN by
+  //     default the moment the server enters POST_GAME (final standings
+  //     freeze). Closing it returns the player to the canvas to keep
+  //     fighting in the sandbox brawl. The frozen leaderboard payload
+  //     itself comes from the server snapshot (`frozen_leaderboard` /
+  //     wire key `fl`).
+  // zh-TW: Phase 15 — 賽後 UI 狀態。一旦伺服器進入 POST_GAME，排行榜面板
+  //     預設「打開」（顯示凍結後的最終排行）。關閉面板會回到畫布並繼續
+  //     沙盒對戰。凍結排行榜的內容來自伺服器快照（`frozen_leaderboard` /
+  //     wire 短鍵 `fl`）。
+  const [showFinalBoard, setShowFinalBoard] = useState(false);
   const [resetNotice, setResetNotice] = useState(false);
 
   const prevResetSeqRef = useRef(0);
-  const prevGameOverRef = useRef(false);
+  const prevMatchStateRef = useRef("PLAYING");
 
   const { stateRef, playerId, status, send } = useGameSocket({
     url: wsUrl,
@@ -40,6 +50,14 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   const keysRef = useRef({ w: false, a: false, s: false, d: false });
   const mouseRef = useRef({ x: 0, y: 0, fire: false });
   const joystickRef = useRef({ x: 0, y: 0 });
+  // EN: Phase 15 — twin-stick aim state. When `active` is true the angle
+  //     comes from the RIGHT joystick. When false we fall back to mouse
+  //     aim on desktop, or simply hold the last known angle on mobile
+  //     (so the weapon doesn't snap to 0 rad when the player lifts off).
+  // zh-TW: Phase 15 — 雙搖桿瞄準狀態。`active` 為 true 時角度來自右搖桿；
+  //     為 false 時：桌面退回滑鼠瞄準；手機則保留最後一個角度，避免放開
+  //     搖桿後槍口瞬間跳回 0 弧度。
+  const aimRef = useRef({ angle: 0, active: false });
   const touchFireRef = useRef(false);
   const lastAngleRef = useRef(0);
   const playerIdRef = useRef(null);
@@ -89,6 +107,16 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   }, [send, stateRef]);
 
   // ---------------- Input loop @ 30 Hz ----------------
+  // EN: Phase 15 twin-stick rule:
+  //   • LEFT joystick (movement) NEVER affects aim. Old behaviour where
+  //     `angle = atan2(jy, jx)` was deleted.
+  //   • RIGHT joystick (AimJoystick) feeds aimRef. When active, its angle
+  //     wins. When idle on mobile, keep the last angle. On desktop with
+  //     no joystick at all, use mouse → world aim.
+  // zh-TW: Phase 15 雙搖桿規則：
+  //   • 左搖桿（移動）絕不影響瞄準，已刪除舊版「角度跟隨左搖桿」邏輯。
+  //   • 右搖桿（AimJoystick）寫入 aimRef，active 時角度由它決定；手機未
+  //     按住時保留最後角度；桌面無任何搖桿則使用滑鼠 → 世界座標瞄準。
   useEffect(() => {
     const id = setInterval(() => {
       const k = keysRef.current;
@@ -104,12 +132,14 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       const canvas = canvasRef.current;
 
       let angle = lastAngleRef.current;
-      const usingJoystick = Math.abs(jx) + Math.abs(jy) > 0.001;
+      const aim = aimRef.current;
 
-      if (usingJoystick) {
-        angle = Math.atan2(dy, dx);
+      if (aim.active) {
+        angle = aim.angle;
         lastAngleRef.current = angle;
       } else if (!IS_COARSE && me && canvas && snap?.world) {
+        // EN: Desktop fallback — aim toward the mouse position in world space.
+        // zh-TW: 桌面退回模式 — 朝滑鼠位置（世界座標）瞄準。
         const camX = me.x + me.w / 2 - canvas.clientWidth / 2;
         const camY = me.y + me.h / 2 - canvas.clientHeight / 2;
         const wx = mouseRef.current.x + camX;
@@ -117,6 +147,8 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         angle = Math.atan2(wy - (me.y + me.h / 2), wx - (me.x + me.w / 2));
         lastAngleRef.current = angle;
       }
+      // EN: Mobile + idle right-stick → keep `lastAngleRef` (no snap).
+      // zh-TW: 手機 + 右搖桿放開 → 保留 lastAngleRef，不重設角度。
 
       const fire = mouseRef.current.fire || touchFireRef.current;
       send({ type: "input", dx, dy, angle, fire });
@@ -130,21 +162,29 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       const snap = stateRef.current;
       if (!snap) return;
 
-      // Detect match reset
+      // Match reset detection
       const seq = snap.reset_seq ?? 0;
       if (seq !== prevResetSeqRef.current) {
         prevResetSeqRef.current = seq;
         setResetNotice(true);
-        setGameOverData(null);
+        setShowFinalBoard(false);
         const tid = setTimeout(() => setResetNotice(false), 3000);
         return () => clearTimeout(tid);
       }
 
-      // Auto-close game over when game restarts
-      if (prevGameOverRef.current && !snap.game_over) {
-        setGameOverData(null);
+      // EN: Phase 15 — auto-pop the final board the instant the server
+      //     transitions from PLAYING → POST_GAME. The user can dismiss it
+      //     to return to the sandbox brawl; we never re-pop it for the
+      //     same match (only on a fresh PLAYING → POST_GAME edge).
+      // zh-TW: Phase 15 — 伺服器由 PLAYING 切到 POST_GAME 的瞬間自動彈出
+      //     最終排行榜。使用者關閉後不會再自動彈第二次（除非進入新一輪
+      //     的 PLAYING → POST_GAME 轉換）。
+      const ms = snap.match_state || "PLAYING";
+      if (prevMatchStateRef.current !== ms) {
+        if (ms === "POST_GAME") setShowFinalBoard(true);
+        if (ms === "PLAYING") setShowFinalBoard(false);
+        prevMatchStateRef.current = ms;
       }
-      prevGameOverRef.current = snap.game_over ?? false;
 
       const me = snap.players.find((p) => p.id === playerIdRef.current);
       if (!me) return;
@@ -162,16 +202,8 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
           && prev.canRespawn === next.canRespawn) return prev;
         return next;
       });
-
-      if (snap.game_over && !gameOverData) {
-        const cols = (snap.settings?.leaderboard_columns || "kills,deaths,damage_dealt,damage_taken")
-          .split(",").map(s => s.trim()).filter(Boolean);
-        const sorted = [...(snap.players || [])].sort((a, b) => (b.kills ?? 0) - (a.kills ?? 0));
-        setGameOverData({ players: sorted, columns: cols });
-      }
     }, 100);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateRef]);
 
   // ---------------- Render loop @ rAF ----------------
@@ -236,10 +268,16 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       }
 
       drawMinimap(ctx, snap, me);
-      drawHUD(ctx, snap, me, status, W);
+      drawHUD(ctx, snap, me, W, t);
 
       if (snap.game_time_remaining > 0) {
         drawGameTimer(ctx, W, snap.game_time_remaining, t.timeRemaining);
+      }
+
+      // EN: Phase 15 — POST_GAME banner overlays the canvas while in sandbox.
+      // zh-TW: Phase 15 — 沙盒對戰時頂端顯示 POST_GAME 橫幅。
+      if ((snap.match_state || "PLAYING") === "POST_GAME" && !showFinalBoard) {
+        drawPostGameBanner(ctx, W, t.postGame);
       }
 
       raf = requestAnimationFrame(draw);
@@ -250,9 +288,13 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
     };
-  }, [stateRef, status, t]);
+  }, [stateRef, status, t, showFinalBoard]);
 
   const handleJoystick = useCallback((x, y) => { joystickRef.current.x = x; joystickRef.current.y = y; }, []);
+  const handleAim = useCallback((angle, active) => {
+    aimRef.current.angle = angle;
+    aimRef.current.active = active;
+  }, []);
   const handleFire = useCallback((on) => { touchFireRef.current = on; }, []);
 
   const cycleSpectate = (dir) => {
@@ -266,12 +308,35 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
     spectateTargetRef.current = next.id;
   };
 
+  // EN: Build the "final standings" data the FullLeaderboard renders.
+  //     Source of truth is the server snapshot's frozen_leaderboard (wire
+  //     key `fl`). If the client hasn't received it yet (rare race), fall
+  //     back to the live player list so the modal is never empty.
+  // zh-TW: 給 FullLeaderboard 顯示的「最終排行榜」資料。
+  //     資料源為伺服器快照的 frozen_leaderboard（wire 短鍵 `fl`）；
+  //     若極短暫時間內 client 還沒收到，退回使用即時玩家清單，避免
+  //     彈窗看起來空白。
+  const finalBoardData = (() => {
+    const snap = stateRef.current;
+    if (!snap) return null;
+    const cols = (snap.settings?.leaderboard_columns || "kills,deaths,damage_dealt,damage_taken")
+      .split(",").map(s => s.trim()).filter(Boolean);
+    const frozen = Array.isArray(snap.frozen_leaderboard) && snap.frozen_leaderboard.length > 0
+      ? snap.frozen_leaderboard
+      : (snap.players || []);
+    return { players: frozen, columns: cols };
+  })();
+
   return (
     <>
       <canvas ref={canvasRef} style={{ display: "block", cursor: IS_COARSE ? "none" : "crosshair" }} />
 
       {overlay.meState === "alive" && (
-        <MobileControls onJoystick={handleJoystick} onFire={handleFire} />
+        <MobileControls
+          onJoystick={handleJoystick}
+          onAim={handleAim}
+          onFire={handleFire}
+        />
       )}
 
       {overlay.meState === "dead" && (
@@ -285,7 +350,6 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         />
       )}
 
-      {/* Spectate bar with countdown */}
       {overlay.meState === "spectating" && (
         <div className="br-spectate-bar">
           <button className="br-btn br-btn--ghost" onClick={() => cycleSpectate(-1)}>
@@ -313,16 +377,21 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         </div>
       )}
 
-      {/* Game Over overlay */}
-      {gameOverData && (
-        <GameOverOverlay
-          data={gameOverData}
+      {/* EN: Phase 15 — full-list scrollable leaderboard with local-player
+              glow. Shown when the user opens it during POST_GAME (auto on
+              transition; manual via the "scoreboard" key in future). The
+              "Close" button returns to the canvas (sandbox brawl).
+          zh-TW: Phase 15 — 全玩家可捲動排行榜，本地玩家列發光高亮。
+              POST_GAME 自動彈出；按下「關閉」即可回到畫布繼續沙盒對戰。 */}
+      {showFinalBoard && finalBoardData && (
+        <FullLeaderboard
+          data={finalBoardData}
           t={t}
-          onClose={() => setGameOverData(null)}
+          localPlayerId={playerIdRef.current}
+          onClose={() => setShowFinalBoard(false)}
         />
       )}
 
-      {/* Match reset toast */}
       {resetNotice && <ResetNotice label={t.matchResetNotice} />}
     </>
   );
@@ -346,8 +415,15 @@ function ResetNotice({ label }) {
   );
 }
 
-// ── Leaderboard used by both GameCanvas and DirectorCanvas ──
-export function GameOverOverlay({ data, t, onClose }) {
+// EN: Phase 15 — full-list, scrollable Tab/End-Game leaderboard.
+//     • Shows EVERY player (no top-10 cap) with `overflow-y-auto`.
+//     • Highlights the local player's row with a glowing cyan border.
+//     • "Close" returns to the canvas so the sandbox brawl can continue.
+// zh-TW: Phase 15 — 完整可捲動的排行榜（Tab / 賽後皆使用此元件）。
+//     • 顯示所有玩家（不再限制前 10），長度超過時自動 `overflow-y-auto`。
+//     • 本地玩家列以青色發光邊框高亮。
+//     • 按「關閉」即可回到畫布繼續沙盒對戰。
+export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
   const { players, columns } = data;
   const colLabels = {
     kills: t.kills,
@@ -355,14 +431,8 @@ export function GameOverOverlay({ data, t, onClose }) {
     damage_dealt: t.damageDealt,
     damage_taken: t.damageTaken,
   };
-
-  const [mobileSortCol, setMobileSortCol] = useState(columns[0] || "kills");
-  // Desktop: show each selected column as a separate sorted panel
-  // Mobile: single sorted table + dropdown
-  const isDesktop = typeof window !== "undefined" && window.innerWidth >= 700;
-
-  const sortedFor = (col) =>
-    [...players].sort((a, b) => (b[col] ?? 0) - (a[col] ?? 0));
+  const primary = columns[0] || "kills";
+  const sorted = [...players].sort((a, b) => (b[primary] ?? 0) - (a[primary] ?? 0));
 
   return (
     <div style={{
@@ -370,9 +440,8 @@ export function GameOverOverlay({ data, t, onClose }) {
       background: "rgba(3,6,13,0.93)",
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "flex-start",
-      overflowY: "auto", padding: "20px 12px 32px",
+      padding: "20px 12px 32px",
     }}>
-      {/* Title */}
       <div style={{
         fontFamily: "var(--br-display)", fontSize: "clamp(22px,5vw,52px)",
         fontWeight: 700, letterSpacing: "0.18em", color: "#ff3b5c",
@@ -383,128 +452,135 @@ export function GameOverOverlay({ data, t, onClose }) {
       </div>
       <div style={{
         fontFamily: "var(--br-mono)", fontSize: "clamp(9px,2vw,11px)",
-        letterSpacing: "0.32em", color: "#91a3c4", marginBottom: 16, flexShrink: 0,
+        letterSpacing: "0.32em", color: "#91a3c4", marginBottom: 6, flexShrink: 0,
       }}>
         {t.finalLeaderboard}
       </div>
-
-      {/* Mobile: dropdown sort selector */}
-      {!isDesktop && (
-        <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <span style={{ fontFamily: "var(--br-mono)", fontSize: 11, color: "#91a3c4" }}>{t.sortBy}</span>
-          <select
-            style={{
-              background: "rgba(10,18,38,0.9)", color: "#d8e6ff",
-              border: "1px solid rgba(110,145,200,0.3)", borderRadius: 6,
-              padding: "4px 8px", fontFamily: "var(--br-mono)", fontSize: 12,
-            }}
-            value={mobileSortCol}
-            onChange={e => setMobileSortCol(e.target.value)}
-          >
-            {columns.map(c => (
-              <option key={c} value={c}>{colLabels[c] || c}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Desktop: multiple panels, Mobile: single panel */}
       <div style={{
-        display: "flex", flexDirection: isDesktop ? "row" : "column",
-        gap: 10, width: "100%", maxWidth: isDesktop ? "min(98vw,1200px)" : 480,
-        flexWrap: "wrap", justifyContent: "center",
+        fontFamily: "var(--br-mono)", fontSize: "clamp(10px,2vw,12px)",
+        color: "#22d3ee", marginBottom: 12, flexShrink: 0,
       }}>
-        {(isDesktop ? columns : [mobileSortCol]).map(col => (
-          <LeaderboardPanel key={col}
-            players={sortedFor(col)}
-            sortCol={col}
-            colLabel={colLabels[col] || col}
-            allCols={isDesktop ? [col] : columns}
-            colLabels={colLabels}
-            isSingle={!isDesktop}
-          />
-        ))}
+        ◆ {t.postGame} — {t.postGameHint}
       </div>
 
-      <button
-        style={{
-          marginTop: 18, padding: "10px 36px",
-          background: "rgba(34,211,238,0.12)", border: "1px solid rgba(34,211,238,0.4)",
-          borderRadius: 8, color: "#22d3ee",
-          fontFamily: "var(--br-display)", fontWeight: 700,
-          fontSize: 14, letterSpacing: "0.2em", cursor: "pointer",
-          flexShrink: 0,
-        }}
-        onClick={onClose}
-      >
-        {t.close}
-      </button>
-    </div>
-  );
-}
-
-function LeaderboardPanel({ players, sortCol, colLabel, allCols, colLabels, isSingle }) {
-  return (
-    <div style={{
-      background: "rgba(10,18,38,0.9)", border: "1px solid rgba(110,145,200,0.2)",
-      borderRadius: 10, overflow: "hidden",
-      flex: isSingle ? "none" : "1 1 200px", minWidth: 0,
-    }}>
-      {/* Panel header */}
+      {/* EN: Scroll container — `overflow-y-auto` is the key requirement.
+          zh-TW: 可捲動容器 — `overflow-y-auto` 是 Phase 15 的硬性要求。 */}
       <div style={{
-        background: "rgba(34,211,238,0.1)", borderBottom: "1px solid rgba(110,145,200,0.2)",
-        padding: "7px 12px",
-        fontFamily: "var(--br-mono)", fontSize: 11, letterSpacing: "0.22em",
-        color: "#22d3ee", textAlign: "center",
+        width: "100%", maxWidth: "min(98vw, 880px)",
+        background: "rgba(10,18,38,0.9)",
+        border: "1px solid rgba(110,145,200,0.2)",
+        borderRadius: 10, overflow: "hidden",
+        display: "flex", flexDirection: "column",
+        flex: "1 1 auto", minHeight: 0,
       }}>
-        ▲ {colLabel.toUpperCase()}
-      </div>
-      {/* Column headers */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: `32px 1fr ${allCols.map(() => "64px").join(" ")}`,
-        padding: "5px 10px",
-        fontFamily: "var(--br-mono)", fontSize: 10, letterSpacing: "0.15em", color: "#5a6b8a",
-        borderBottom: "1px solid rgba(110,145,200,0.08)",
-      }}>
-        <span>#</span>
-        <span>NAME</span>
-        {allCols.map(c => (
-          <span key={c} style={{ textAlign: "right" }}>
-            {(colLabels[c] || c).slice(0, 4).toUpperCase()}
-          </span>
-        ))}
-      </div>
-      {/* Rows */}
-      {players.slice(0, 10).map((p, i) => (
-        <div key={p.id} style={{
+        <div style={{
           display: "grid",
-          gridTemplateColumns: `32px 1fr ${allCols.map(() => "64px").join(" ")}`,
-          padding: "6px 10px",
-          borderBottom: "1px solid rgba(110,145,200,0.05)",
-          fontFamily: "var(--br-font)", fontSize: 13,
-          color: i === 0 ? "#fbbf24" : "#d8e6ff",
-          background: i === 0 ? "rgba(251,191,36,0.06)" : "transparent",
+          gridTemplateColumns: `40px 1fr ${columns.map(() => "72px").join(" ")}`,
+          padding: "8px 12px",
+          background: "rgba(34,211,238,0.08)",
+          borderBottom: "1px solid rgba(110,145,200,0.2)",
+          fontFamily: "var(--br-mono)", fontSize: 11,
+          letterSpacing: "0.2em", color: "#5a6b8a",
+          flexShrink: 0,
         }}>
-          <span style={{ fontFamily: "var(--br-mono)", color: "#5a6b8a", fontSize: 11 }}>
-            {String(i + 1).padStart(2, "0")}
-          </span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {p.is_bot ? "🤖 " : ""}{p.name}
-          </span>
-          {allCols.map(c => (
-            <span key={c} style={{
-              textAlign: "right", fontFamily: "var(--br-mono)", fontSize: 12,
-              color: c === sortCol ? "#22d3ee" : "#91a3c4",
-            }}>
-              {typeof p[c] === "number" ? Math.round(p[c]) : (p[c] ?? 0)}
+          <span>#</span>
+          <span>NAME</span>
+          {columns.map(c => (
+            <span key={c} style={{ textAlign: "right", color: "#22d3ee" }}>
+              {(colLabels[c] || c).slice(0, 6).toUpperCase()}
             </span>
           ))}
         </div>
-      ))}
+
+        <div style={{
+          overflowY: "auto",
+          flex: "1 1 auto",
+          minHeight: 0,
+        }}>
+          {sorted.map((p, i) => {
+            const isMe = localPlayerId && p.id === localPlayerId;
+            return (
+              <div key={p.id} style={{
+                display: "grid",
+                gridTemplateColumns: `40px 1fr ${columns.map(() => "72px").join(" ")}`,
+                padding: "8px 12px",
+                borderBottom: "1px solid rgba(110,145,200,0.06)",
+                fontFamily: "var(--br-font)", fontSize: 13,
+                color: i === 0 ? "#fbbf24" : "#d8e6ff",
+                background: isMe
+                  ? "rgba(34,211,238,0.12)"
+                  : (i === 0 ? "rgba(251,191,36,0.06)" : "transparent"),
+                boxShadow: isMe
+                  ? "inset 0 0 0 2px rgba(34,211,238,0.85), 0 0 18px rgba(34,211,238,0.45)"
+                  : "none",
+                position: "relative",
+              }}>
+                <span style={{ fontFamily: "var(--br-mono)", color: "#5a6b8a", fontSize: 11 }}>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {p.is_bot ? "🤖 " : ""}{p.name}
+                  {isMe && (
+                    <span style={{
+                      marginLeft: 8, fontSize: 10, color: "#22d3ee",
+                      fontFamily: "var(--br-mono)", letterSpacing: "0.18em",
+                    }}>
+                      ◀ YOU
+                    </span>
+                  )}
+                </span>
+                {columns.map(c => (
+                  <span key={c} style={{
+                    textAlign: "right", fontFamily: "var(--br-mono)", fontSize: 12,
+                    color: c === primary ? "#22d3ee" : "#91a3c4",
+                  }}>
+                    {typeof p[c] === "number" ? Math.round(p[c]) : (p[c] ?? 0)}
+                  </span>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, marginTop: 16, flexShrink: 0 }}>
+        <button
+          style={{
+            padding: "10px 36px",
+            background: "rgba(34,211,238,0.12)",
+            border: "1px solid rgba(34,211,238,0.4)",
+            borderRadius: 8, color: "#22d3ee",
+            fontFamily: "var(--br-display)", fontWeight: 700,
+            fontSize: 14, letterSpacing: "0.2em", cursor: "pointer",
+          }}
+          onClick={onClose}
+        >
+          {t.close}
+        </button>
+        <button
+          style={{
+            padding: "10px 36px",
+            background: "rgba(34,197,94,0.12)",
+            border: "1px solid rgba(34,197,94,0.4)",
+            borderRadius: 8, color: "#22c55e",
+            fontFamily: "var(--br-display)", fontWeight: 700,
+            fontSize: 14, letterSpacing: "0.2em", cursor: "pointer",
+          }}
+          onClick={onClose}
+        >
+          ▸ {t.backToFight}
+        </button>
+      </div>
     </div>
   );
 }
+
+// EN: Backwards-compat alias — DirectorCanvas still imports `GameOverOverlay`.
+//     We expose the new full-list leaderboard under both names so legacy
+//     callers keep working without a separate edit pass.
+// zh-TW: 向後相容別名 — DirectorCanvas 仍以 `GameOverOverlay` 名稱匯入。
+//     兩個名稱都指向新版完整排行榜元件，舊呼叫端不需另外修改。
+export const GameOverOverlay = FullLeaderboard;
 
 // ================ Canvas Render helpers ================
 
@@ -579,24 +655,56 @@ function drawMinimap(ctx, snap, me) {
   ctx.restore();
 }
 
-function drawHUD(ctx, snap, me, status, W) {
-  const panelW = 260, panelH = 110, x0 = W - panelW - PAD, y0 = PAD;
-  ctx.fillStyle = "rgba(11,15,23,0.78)";
+// EN: Phase 15 — top-right HUD shows EXACTLY 5 fully-translated items:
+//       1. Player name        (t.hudPlayer)
+//       2. Alive count        (t.hudAlive,    state === "alive")
+//       3. Awaiting respawn   (t.hudDead,     state === "dead")
+//       4. HP                 (t.hudHp)
+//       5. Current weapon     (t.hudWeapon — translated via t[`weapon_${id}`])
+//     Diagnostic counters (status, tick) have been removed per the brief.
+// zh-TW: Phase 15 — 右上 HUD 完全只顯示 5 項，且全部使用翻譯字串：
+//       1. 玩家名稱           (t.hudPlayer)
+//       2. 存活人數           (t.hudAlive，   state === "alive")
+//       3. 等待復活           (t.hudDead，    state === "dead")
+//       4. HP                 (t.hudHp)
+//       5. 目前武器           (t.hudWeapon — 透過 t[`weapon_${id}`] 翻譯)
+//     依規格已移除診斷用的 status / tick。
+function drawHUD(ctx, snap, me, W, t) {
+  const panelW = 280, panelH = 130, x0 = W - panelW - PAD, y0 = PAD;
+  ctx.fillStyle = "rgba(11,15,23,0.82)";
   ctx.fillRect(x0, y0, panelW, panelH);
-  ctx.strokeStyle = "#475569";
+  ctx.strokeStyle = "rgba(34,211,238,0.45)";
+  ctx.lineWidth = 1;
   ctx.strokeRect(x0 + 0.5, y0 + 0.5, panelW - 1, panelH - 1);
-  ctx.fillStyle = "#e5e7eb";
+
+  const aliveCount = snap.players.filter((p) => p.state === "alive").length;
+  const awaitingRespawn = snap.players.filter((p) => p.state === "dead").length;
+
   ctx.font = "13px ui-monospace, monospace";
   ctx.textAlign = "start";
   let row = y0 + 22;
-  ctx.fillText(`status : ${status}`, x0 + 12, row); row += 18;
-  ctx.fillText(`tick   : ${snap.tick}`, x0 + 12, row); row += 18;
-  const alive = snap.players.filter((p) => p.state === "alive").length;
-  ctx.fillText(`alive  : ${alive}/${snap.players.length}`, x0 + 12, row); row += 18;
-  if (me) {
-    ctx.fillText(`${me.name}${me.team ? ` [${me.team}]` : ""}`, x0 + 12, row); row += 18;
-    ctx.fillText(`hp ${me.hp.toFixed(0)}/${me.max_hp}  k:${me.kills} d:${me.deaths}  ${me.weapon}`, x0 + 12, row);
-  }
+  const lh = 21;
+
+  const drawRow = (label, value, valueColor = "#e5e7eb") => {
+    ctx.fillStyle = "#91a3c4";
+    ctx.fillText(`${label}`, x0 + 12, row);
+    ctx.fillStyle = valueColor;
+    const val = String(value);
+    const metrics = ctx.measureText(val);
+    ctx.fillText(val, x0 + panelW - 12 - metrics.width, row);
+    row += lh;
+  };
+
+  const myName = me ? `${me.name}${me.team ? ` [${me.team}]` : ""}` : "—";
+  const myHp = me ? `${Math.max(0, Math.round(me.hp))}/${Math.round(me.max_hp)}` : "—";
+  const weaponId = me?.weapon || "—";
+  const weaponLabel = (t[`weapon_${weaponId}`] || weaponId).toString();
+
+  drawRow(`${t.hudPlayer}:`, myName, "#22d3ee");
+  drawRow(`${t.hudAlive}:`, aliveCount, "#22c55e");
+  drawRow(`${t.hudDead}:`, awaitingRespawn, "#ff7a8e");
+  drawRow(`${t.hudHp}:`, myHp);
+  drawRow(`${t.hudWeapon}:`, weaponLabel, "#fbbf24");
 }
 
 function drawGameTimer(ctx, W, remaining, label) {
@@ -624,6 +732,27 @@ function drawGameTimer(ctx, W, remaining, label) {
   ctx.restore();
 }
 
+// EN: Phase 15 — POST_GAME banner pinned under the (now-hidden) timer.
+// zh-TW: Phase 15 — POST_GAME 橫幅，貼在原計時器位置。
+function drawPostGameBanner(ctx, W, label) {
+  ctx.save();
+  const boxW = 320, boxH = 36, x0 = (W - boxW) / 2, y0 = 12;
+  ctx.fillStyle = "rgba(255,59,92,0.18)";
+  ctx.fillRect(x0, y0, boxW, boxH);
+  ctx.strokeStyle = "#ff3b5c";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x0 + 0.5, y0 + 0.5, boxW - 1, boxH - 1);
+  ctx.textAlign = "center";
+  ctx.font = "bold 13px ui-monospace, monospace";
+  ctx.fillStyle = "#ff7a8e";
+  ctx.shadowColor = "#ff3b5c";
+  ctx.shadowBlur = 10;
+  ctx.fillText(`◆ ${label} ◆`, W / 2, y0 + 23);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = "start";
+  ctx.restore();
+}
+
 function detectThreats(snap, me) {
   const threats = [];
   const cx = me.x + me.w / 2, cy = me.y + me.h / 2;
@@ -646,7 +775,6 @@ function drawThreatBanner(ctx, W, H, tSec, label) {
   ctx.fillStyle = `rgba(239,68,68,${alpha})`;
   ctx.font = "bold 16px sans-serif";
   ctx.textAlign = "center";
-  // Positioned at bottom center
   ctx.fillText(`⚠ ${label}`, W / 2, H - 50);
   ctx.restore();
 }

@@ -104,6 +104,16 @@ export default function expandSnapshot(msg) {
 
   const players = Array.isArray(msg.ps) ? msg.ps.map(expandPlayer) : [];
   const bullets = Array.isArray(msg.bs) ? msg.bs.map(expandBullet) : [];
+  // EN: Phase 15 wire additions —
+  //     `ms`  → match_state ("PLAYING" | "POST_GAME")
+  //     `fl`  → frozen_leaderboard (only populated in POST_GAME)
+  //     `dev` → admin-only device map (player_id → {ip, ua}); will be
+  //             undefined on player / director sockets.
+  // zh-TW: Phase 15 線上格式新增 —
+  //     `ms`  → match_state（"PLAYING" | "POST_GAME"）
+  //     `fl`  → frozen_leaderboard（僅 POST_GAME 帶值）
+  //     `dev` → 管理員專屬設備對照表（player_id → {ip, ua}）；
+  //             玩家 / 導播 WS 不會收到，會是 undefined。
   return {
     type: "state",
     tick: msg.t,
@@ -113,6 +123,9 @@ export default function expandSnapshot(msg) {
     game_over: msg.go,
     game_time_remaining: msg.tr,
     reset_seq: msg.rs,
+    match_state: msg.ms || "PLAYING",
+    frozen_leaderboard: Array.isArray(msg.fl) ? msg.fl : [],
+    devices: msg.dev || null,
     players,
     bullets,
   };

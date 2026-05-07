@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import Joystick from "./Joystick.jsx";
-import FireButton from "./FireButton.jsx";
+import AimJoystick from "./AimJoystick.jsx";
 
+/**
+ * EN: MobileControls (Phase 15) — twin-stick layout.
+ *     LEFT  : <Joystick/>      → movement only (NO automatic aim).
+ *     RIGHT : <AimJoystick/>   → aim direction + fire (replaces FireButton).
+ *     The legacy auto-aim where the weapon barrel followed the LEFT stick
+ *     has been REMOVED at the GameCanvas layer; this component just wires
+ *     the two stick callbacks back to the parent.
+ * zh-TW: MobileControls（Phase 15）— 雙搖桿佈局。
+ *     左：<Joystick/>      → 「僅控制移動」（不再自動旋轉槍口）。
+ *     右：<AimJoystick/>   → 控制瞄準角度 + 射擊（取代 FireButton）。
+ *     舊版「左搖桿同時控制移動與槍口」的行為已在 GameCanvas 層移除；
+ *     本元件只負責把兩支搖桿的 callback 接回上層。
+ */
 function shouldShow() {
   if (typeof window === "undefined") return false;
   const forced = new URLSearchParams(location.search).get("touch") === "1";
@@ -16,7 +29,7 @@ function getCtrlSize() {
   return Math.max(100, Math.min(180, Math.round(dim * 0.22)));
 }
 
-export default function MobileControls({ onJoystick, onFire }) {
+export default function MobileControls({ onJoystick, onAim, onFire }) {
   const [visible, setVisible] = useState(shouldShow());
   const [ctrlSize, setCtrlSize] = useState(getCtrlSize);
 
@@ -36,7 +49,6 @@ export default function MobileControls({ onJoystick, onFire }) {
   if (!visible) return null;
 
   const knobSize = Math.round(ctrlSize * 0.43);
-  const fireSize = Math.round(ctrlSize * 0.9);
   const pad = Math.round(ctrlSize * 0.17);
 
   return (
@@ -46,6 +58,8 @@ export default function MobileControls({ onJoystick, onFire }) {
       pointerEvents: "none",
       zIndex: 10,
     }}>
+      {/* EN: LEFT — movement only.
+          zh-TW: 左 — 僅控制移動。 */}
       <div style={{
         position: "absolute",
         left: pad,
@@ -54,13 +68,20 @@ export default function MobileControls({ onJoystick, onFire }) {
       }}>
         <Joystick size={ctrlSize} knobSize={knobSize} onChange={onJoystick} />
       </div>
+      {/* EN: RIGHT — twin-stick aim + fire (Phase 15).
+          zh-TW: 右 — 雙搖桿瞄準 + 射擊（Phase 15）。 */}
       <div style={{
         position: "absolute",
         right: pad,
-        bottom: pad + Math.round(ctrlSize * 0.05),
+        bottom: pad,
         pointerEvents: "auto",
       }}>
-        <FireButton size={fireSize} onChange={onFire} />
+        <AimJoystick
+          size={ctrlSize}
+          knobSize={knobSize}
+          onAim={onAim}
+          onFire={onFire}
+        />
       </div>
     </div>
   );

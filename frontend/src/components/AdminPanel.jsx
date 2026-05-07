@@ -439,6 +439,19 @@ export default function AdminPanel({ stateRef, send, onClose }) {
             </div>
           </div>
 
+          {/* EN: Phase 15 — admin-only `Device` column.
+                  The `devices` map comes from the AUGMENTED admin snapshot
+                  (`admin_snapshot()` in engine.py) and is keyed by player_id.
+                  We surface IP and a truncated User-Agent (full UA on hover
+                  via title=). This column is added INSIDE AdminPanel only;
+                  the regular player snapshot never carries this data, so
+                  ordinary players cannot see other players' device info.
+              zh-TW: Phase 15 — 管理員專屬「設備」欄位。
+                  `devices` 對照表來自管理員擴充版快照
+                  （engine.py 的 `admin_snapshot()`），以 player_id 為 key。
+                  欄位顯示 IP 與截短的 User-Agent（hover 顯示完整 UA）。
+                  此欄僅出現在 AdminPanel；一般玩家快照不帶這份資料，
+                  普通玩家絕對看不到其他玩家的設備資訊。 */}
           <div className="br-table">
             <div className="br-table-head">
               <span className="br-th br-th--idx">#</span>
@@ -448,54 +461,88 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               <span className="br-th br-th--num">D</span>
               <span className="br-th br-th--num">DMG</span>
               <span className="br-th br-th--state">STATE</span>
+              <span className="br-th" style={{ minWidth: 180, flex: "1 1 180px" }}>
+                {t.adminDevice}
+              </span>
               <span className="br-th br-th--act" style={{ minWidth: 140 }}>ACTION</span>
             </div>
 
             <div className="br-table-body">
-              {filtered.map((p, i) => (
-                <div className={`br-tr ${p.is_bot ? "is-bot" : ""}`} key={p.id}>
-                  <span className="br-td br-td--idx">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="br-td br-td--name">
-                    <span className="br-name">{p.name}</span>
-                    {p.is_bot && <span className="br-tag br-tag--bot">BOT</span>}
-                    {p.state === "dead" && p.respawn_at > 0 && (
-                      <span style={{ fontSize: 11, color: "#ff7a8e", marginLeft: 6, fontFamily: "var(--br-mono)" }}>
-                        ({Math.max(0, p.respawn_at - (snap?.now || 0)).toFixed(1)}s)
-                      </span>
-                    )}
-                  </span>
-                  <span className="br-td br-td--team">
-                    {p.team
-                      ? <span className={`br-team-pill br-team-pill--${p.team}`}>{p.team.toUpperCase()}</span>
-                      : <span className="br-mute">—</span>}
-                  </span>
-                  <span className="br-td br-td--num br-mono">{p.kills ?? 0}</span>
-                  <span className="br-td br-td--num br-mono br-mute">{p.deaths ?? 0}</span>
-                  <span className="br-td br-td--num br-mono br-cyan">{Math.round(p.damage_dealt ?? 0)}</span>
-                  <span className="br-td br-td--state"><StateBadge state={p.state} /></span>
-                  <span className="br-td br-td--act flex flex-wrap items-center gap-1 md:gap-2">
-                    <button className="br-btn br-btn--xs"
-                      onClick={() => send({ type: "admin_force_respawn", player_id: p.id })}
-                      disabled={p.state === "alive"}
-                      title={t.respawn}>
-                      <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden>
-                        <path d="M8 3 V1 L4 4 L8 7 V5 A3 3 0 1 1 5 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                      </svg>
-                    </button>
-                    <button className="br-btn br-btn--xs br-btn--danger"
-                      onClick={() => send({ type: "admin_force_kill", player_id: p.id })}
-                      disabled={p.state !== "alive"}
-                      title={t.forceKill}
-                      style={{ borderColor: "rgba(255,59,92,0.5)", color: "#ff7a8e" }}>
-                      ✕
-                    </button>
-                    <PlayerHpInput
-                      label={t.setHpIndividual}
-                      onSet={(hp) => send({ type: "admin_set_player_hp", player_id: p.id, hp })}
-                    />
-                  </span>
-                </div>
-              ))}
+              {filtered.map((p, i) => {
+                const dev = (snap?.devices && snap.devices[p.id]) || null;
+                const ip = dev?.ip || "";
+                const ua = dev?.ua || "";
+                const uaShort = ua.length > 38 ? ua.slice(0, 36) + "…" : ua;
+                return (
+                  <div className={`br-tr ${p.is_bot ? "is-bot" : ""}`} key={p.id}>
+                    <span className="br-td br-td--idx">{String(i + 1).padStart(2, "0")}</span>
+                    <span className="br-td br-td--name">
+                      <span className="br-name">{p.name}</span>
+                      {p.is_bot && <span className="br-tag br-tag--bot">BOT</span>}
+                      {p.state === "dead" && p.respawn_at > 0 && (
+                        <span style={{ fontSize: 11, color: "#ff7a8e", marginLeft: 6, fontFamily: "var(--br-mono)" }}>
+                          ({Math.max(0, p.respawn_at - (snap?.now || 0)).toFixed(1)}s)
+                        </span>
+                      )}
+                    </span>
+                    <span className="br-td br-td--team">
+                      {p.team
+                        ? <span className={`br-team-pill br-team-pill--${p.team}`}>{p.team.toUpperCase()}</span>
+                        : <span className="br-mute">—</span>}
+                    </span>
+                    <span className="br-td br-td--num br-mono">{p.kills ?? 0}</span>
+                    <span className="br-td br-td--num br-mono br-mute">{p.deaths ?? 0}</span>
+                    <span className="br-td br-td--num br-mono br-cyan">{Math.round(p.damage_dealt ?? 0)}</span>
+                    <span className="br-td br-td--state"><StateBadge state={p.state} /></span>
+                    <span
+                      className="br-td"
+                      style={{
+                        minWidth: 180, flex: "1 1 180px",
+                        fontFamily: "var(--br-mono)", fontSize: 11,
+                        color: "#91a3c4", lineHeight: 1.35,
+                        overflow: "hidden",
+                      }}
+                      title={ua ? `${t.adminIp}: ${ip}\n${t.adminUserAgent}: ${ua}` : t.adminDevice}
+                    >
+                      {p.is_bot ? (
+                        <span className="br-mute">—</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", flexDirection: "column" }}>
+                          <span style={{ color: "#22d3ee" }}>{ip || "—"}</span>
+                          <span style={{
+                            color: "#5a6b8a",
+                            overflow: "hidden", textOverflow: "ellipsis",
+                            whiteSpace: "nowrap", maxWidth: 220,
+                          }}>
+                            {uaShort || "—"}
+                          </span>
+                        </span>
+                      )}
+                    </span>
+                    <span className="br-td br-td--act flex flex-wrap items-center gap-1 md:gap-2">
+                      <button className="br-btn br-btn--xs"
+                        onClick={() => send({ type: "admin_force_respawn", player_id: p.id })}
+                        disabled={p.state === "alive"}
+                        title={t.respawn}>
+                        <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden>
+                          <path d="M8 3 V1 L4 4 L8 7 V5 A3 3 0 1 1 5 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                        </svg>
+                      </button>
+                      <button className="br-btn br-btn--xs br-btn--danger"
+                        onClick={() => send({ type: "admin_force_kill", player_id: p.id })}
+                        disabled={p.state !== "alive"}
+                        title={t.forceKill}
+                        style={{ borderColor: "rgba(255,59,92,0.5)", color: "#ff7a8e" }}>
+                        ✕
+                      </button>
+                      <PlayerHpInput
+                        label={t.setHpIndividual}
+                        onSet={(hp) => send({ type: "admin_set_player_hp", player_id: p.id, hp })}
+                      />
+                    </span>
+                  </div>
+                );
+              })}
               {filtered.length === 0 && (
                 <div className="br-empty">{t.noPlayers}</div>
               )}

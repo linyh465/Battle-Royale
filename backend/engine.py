@@ -42,6 +42,22 @@ TICK_DT = 1.0 / TICK_RATE
 WORLD_W = 2560
 WORLD_H = 1440
 
+# EN: Phase 15 — match-state machine for the new "Post-Game Sandbox Brawl".
+#     PLAYING       — normal authoritative match.
+#     POST_GAME     — timer expired or admin ended the game; leaderboard is
+#                     FROZEN at the snapshot taken at transition. Players
+#                     may continue to fight & respawn (sandbox), but the
+#                     frozen leaderboard never changes again.
+#     Admin "Reset Match" snaps back to PLAYING and wipes all stats.
+# zh-TW: Phase 15 — 「賽後沙盒對戰」的對戰狀態機。
+#     PLAYING       — 一般正規比賽。
+#     POST_GAME     — 時間到或管理員結束遊戲；排行榜會在切換瞬間「凍結」。
+#                     玩家仍可繼續廝殺與重生（沙盒模式），但凍結後的排行榜
+#                     永遠不再變動。
+#     管理員按下「重置對戰」會切回 PLAYING 並清空所有統計。
+MATCH_PLAYING = "PLAYING"
+MATCH_POST_GAME = "POST_GAME"
+
 # EN: Registry mapping the canonical wire ID → Weapon subclass. Six entries
 #     (Phase 10) — used by lobby selectors, allowed_weapons gating, and
 #     mid-game reassign.
@@ -79,51 +95,44 @@ class GameSettings:
     # Standalone bot management
     bots_enabled: bool = False
     bot_count: int = 0
-    # EN: Phase 12 — global cap on how many bots may simultaneously target
-    #     the *same* human player. Prevents focus-fire pile-ons when many
-    #     bots are enabled. 0 disables the cap (no limit).
-    # zh-TW: Phase 12 — 全域限制：同一名玩家最多可被多少 Bot 同時鎖定。
-    #     避免 Bot 數量很多時多隻同時集火。設為 0 代表不限制。
     bot_max_attack_limit: int = 2
-    # EN: Phase 10 — comma-separated whitelist of weapon IDs the lobby + engine
-    #     are allowed to hand out. Disabling an entry mid-match triggers a
-    #     forced random reassign for all alive players holding it.
-    # zh-TW: Phase 10 — 以逗號分隔的武器白名單，大廳選單與引擎都受其約束。
-    #     比賽中關閉某把武器時，引擎會強制把所有持該武器的存活玩家
-    #     隨機改派到目前還允許的武器之一。
     allowed_weapons: str = DEFAULT_ALLOWED_WEAPONS
 
 
-# ── NOTE: SafeZone / Poison Zone has been REMOVED in Phase 2. ──
-# ── 備註：SafeZone / 毒圈已在 Phase 2 中完全移除。           ──
+# EN: Phase 15 — admin-only device fingerprint captured at WS handshake.
+#     Stored separately from Player so it never leaks into the broadcast
+#     snapshot (which goes to every player). The AdminPanel renders these
+#     fields in its own table column.
+# zh-TW: Phase 15 — 管理員專用的設備指紋，在 WS 握手時擷取。
+#     刻意與 Player 分開存放，避免被廣播快照（會送給每位玩家）洩漏出去。
+#     僅 AdminPanel 在自己的欄位中顯示。
+@dataclass
+class DeviceInfo:
+    ip: str = ""
+    user_agent: str = ""
 
 
 class GameEngine:
-    """EN: Authoritative server-side simulation. Tick rate configurable via
-       TICK_RATE_HZ (default 20). Continuous Deathmatch — no shrinking zone.
-       When no players are connected the loop sleeps on an asyncio.Event,
-       consuming zero CPU until someone joins (Phase 9 idle-pause).
-       zh-TW: 伺服器端權威模擬，tick 頻率可由 TICK_RATE_HZ 環境變數設定（預設 20）。
-       持續餘燼模式 — 無縮圈。當沒有玩家連線時，loop 會 await 一個 asyncio.Event，
-       在 CPU 上完全閒置，直到有人加入才喚醒（Phase 9 閒置暫停）。"""
+    """EN: Authoritative server-side simulation. Phase 15 adds:
+       1. Continuous (swept-line) bullet collision so very fast projectiles
+          (sniper, 1500 px/s) cannot tunnel past a 28 px player at 20 Hz.
+       2. PLAYING / POST_GAME match-state machine + leaderboard freeze.
+       3. Admin-only IP / User-Agent capture (NEVER broadcast to players).
+       zh-TW: 伺服器端權威模擬。Phase 15 新增：
+       1. 子彈連續碰撞（掃掠線）— 解決狙擊槍 1500 px/s 在 20 Hz 下
+          穿透 28 px 玩家 AABB 的「狙擊 0 傷害」bug。
+       2. PLAYING / POST_GAME 對戰狀態機 + 排行榜凍結。
+       3. 管理員專屬 IP / User-Agent 擷取（絕不會廣播給一般玩家）。"""
 
     def __init__(self, world_w: int = WORLD_W, world_h: int = WORLD_H) -> None:
         self.world_w = world_w
         self.world_h = world_h
         self.players: Dict[str, Player] = {}
         self.bullets: List[Bullet] = []
-        # EN: Player WebSocket connections (mapped by player ID).
-        # zh-TW: 玩家 WebSocket 連線（以玩家 ID 為鍵值）。
         self.connections: Dict[str, "WebSocketLike"] = {}
-        # EN: Director WS connections — receive snapshots, send no inputs.
-        # zh-TW: 導播連線只收快照、不送輸入。
         self.directors: List["WebSocketLike"] = []
 
-        # EN: Non-combatant admin WebSocket connections.
-        # zh-TW: 非戰鬥管理員 WebSocket 連線。
         self.admin_ws: Dict[str, "WebSocketLike"] = {}
-        # EN: Legacy set kept for backward-compat checks elsewhere.
-        # zh-TW: 舊版集合，保留供其他模組向後相容使用。
         self.admin_conns: Set[str] = set()
 
         self.settings = GameSettings()
@@ -134,38 +143,56 @@ class GameEngine:
         self.reset_seq: int = 0
         self._standalone_bot_ids: Set[str] = set()
 
-        # EN: Wake-up event used by run() to sleep the simulation loop while
-        #     idle (no players). Created lazily inside run() to bind to the
-        #     correct asyncio loop.
-        # zh-TW: run() 使用的喚醒事件 — 沒有玩家時讓模擬 loop 休眠。
-        #     在 run() 內延遲建立以綁定正確的 asyncio loop。
+        # EN: Phase 15 — match state and frozen leaderboard payload.
+        #     `match_state` swaps between PLAYING and POST_GAME; the
+        #     `frozen_leaderboard` is a shallow copy of relevant per-player
+        #     stats taken at the exact moment of transition. Bots that
+        #     existed when the freeze fired are kept; players that joined
+        #     during POST_GAME are NOT added (the leaderboard is frozen).
+        # zh-TW: Phase 15 — 對戰狀態 + 凍結排行榜資料。
+        #     `match_state` 在 PLAYING / POST_GAME 之間切換；
+        #     `frozen_leaderboard` 是切換瞬間的玩家統計淺複本。凍結後
+        #     新加入的玩家「不會」被補進去（排行榜已凍結）。
+        self.match_state: str = MATCH_PLAYING
+        self.frozen_leaderboard: List[dict] = []
+
+        # EN: Phase 15 — admin device fingerprints, keyed by player_id (NOT
+        #     by admin_id — admins are observers and do not have devices we
+        #     care about for moderation). Capture happens in main.py at
+        #     WebSocket accept time.
+        # zh-TW: Phase 15 — 玩家設備指紋，以 player_id 為 key。
+        #     管理員是觀察者本身不在追蹤範圍。實際擷取於 main.py 的 WS
+        #     accept 時點完成。
+        self.devices: Dict[str, DeviceInfo] = {}
+
         self._wake: asyncio.Event | None = None
 
     # ──────────── Spawning / 生成 ────────────
     def _spawn_position(self) -> tuple[float, float]:
-        # EN: Random position within world bounds (60 px margin).
-        # zh-TW: 在世界邊界內隨機位置（留 60 px 邊距）。
         return (
             random.uniform(60, self.world_w - 60),
             random.uniform(60, self.world_h - 60),
         )
 
     def _wake_loop(self) -> None:
-        # EN: Signal the run() loop to resume from idle sleep.
-        # zh-TW: 通知 run() loop 從閒置睡眠中恢復。
         if self._wake is not None and not self._wake.is_set():
             self._wake.set()
 
-    def add_player(self, name: str, ws) -> Player:
-        # EN: Creates a new combatant Player and registers the WS connection.
-        #     Phase 10 — if the default Pistol is currently disabled by the
-        #     allowed_weapons whitelist, swap to a random allowed weapon so
-        #     joiners never spawn holding a banned gun.
-        #     Wakes the simulation loop if it was idle.
-        # zh-TW: 建立新的戰鬥玩家並註冊其 WebSocket 連線。
-        #     Phase 10 — 若預設手槍已被 allowed_weapons 白名單禁用，
-        #     直接改成隨機允許的武器，避免玩家一加入就拿到被禁的武器。
-        #     若 loop 處於閒置睡眠，則同時喚醒它。
+    def add_player(
+        self,
+        name: str,
+        ws,
+        ip: str = "",
+        user_agent: str = "",
+    ) -> Player:
+        # EN: Phase 15 — admin device fingerprint is captured here too.
+        #     `ip` / `user_agent` come from the FastAPI WebSocket scope
+        #     (see main.py). Stored on a side-table (`self.devices`) — they
+        #     are NEVER added to the broadcast snapshot.
+        # zh-TW: Phase 15 — 同步擷取管理員可見的設備指紋。
+        #     `ip` / `user_agent` 由 FastAPI WebSocket scope 傳入
+        #     （詳見 main.py）。儲存於獨立的 side-table（self.devices），
+        #     絕不放進廣播快照中。
         x, y = self._spawn_position()
         p = Player(name=name or "anon", x=x, y=y)
         p.max_hp = self.settings.default_player_hp
@@ -179,6 +206,7 @@ class GameEngine:
             p.team = self._next_team_assignment()
         self.players[p.id] = p
         self.connections[p.id] = ws
+        self.devices[p.id] = DeviceInfo(ip=ip or "", user_agent=user_agent or "")
         self._wake_loop()
         if self.settings.team_mode:
             self._balance_with_bots()
@@ -194,34 +222,21 @@ class GameEngine:
         return bot
 
     def remove_player(self, pid: str) -> None:
-        # EN: Remove a combatant player and their connection. Eagerly drop
-        #     bullets owned by this player so RAM is freed immediately
-        #     (Phase 9 GC tightening).
-        # zh-TW: 移除戰鬥玩家及其連線。同時立即清除其名下子彈，
-        #     讓 RAM 即時釋放（Phase 9 GC 強化）。
         self.players.pop(pid, None)
         self.connections.pop(pid, None)
         self.admin_conns.discard(pid)
         self._standalone_bot_ids.discard(pid)
+        self.devices.pop(pid, None)
         if self.bullets:
             self.bullets = [b for b in self.bullets if b.owner_id != pid]
         if self.settings.team_mode:
             self._balance_with_bots()
 
     def remove_admin(self, admin_id: str) -> None:
-        # EN: Remove a non-combatant admin connection (no Player to clean up).
-        # zh-TW: 移除非戰鬥管理員連線（無需清除 Player 物件）。
         self.admin_ws.pop(admin_id, None)
         self.admin_conns.discard(admin_id)
 
     def _allowed_weapons_set(self) -> set[str]:
-        # EN: Parse the CSV whitelist into a set of valid weapon IDs that
-        #     also exist in the registry. Falls back to every weapon if the
-        #     parsed set is empty (admin must always have *something* to
-        #     hand out — empty whitelist would brick the lobby).
-        # zh-TW: 把 CSV 白名單解析成存在於 registry 中的武器 ID 集合。
-        #     若解析結果為空（管理員不能讓武器庫變成完全空），自動回退為全部
-        #     武器，避免大廳卡住。
         raw = self.settings.allowed_weapons or ""
         ids = {s.strip() for s in raw.split(",") if s.strip() in WEAPON_REGISTRY}
         return ids if ids else set(WEAPON_REGISTRY.keys())
@@ -230,11 +245,6 @@ class GameEngine:
         return random.choice(sorted(self._allowed_weapons_set()))
 
     def set_weapon(self, pid: str, weapon_name: str) -> None:
-        # EN: Honour the allowed_weapons whitelist. Requesting a banned weapon
-        #     silently snaps to a random allowed one so the player always
-        #     leaves the call holding *something* legal.
-        # zh-TW: 遵守 allowed_weapons 白名單。請求被禁的武器時自動改派到隨機
-        #     允許的武器，確保玩家最後一定持有合法武器。
         p = self.players.get(pid)
         if not p:
             return
@@ -245,15 +255,6 @@ class GameEngine:
             p.weapon = cls()
 
     def _sync_allowed_weapons(self) -> None:
-        # EN: Mid-game override. Whenever the admin updates allowed_weapons,
-        #     iterate every alive player; if their weapon was just removed
-        #     from the whitelist, immediately reassign them to a random
-        #     currently-allowed weapon. Dead/spectating players are left
-        #     alone — they'll be reassigned on respawn via set_weapon.
-        # zh-TW: 比賽中即時覆寫。管理員更新 allowed_weapons 後，遍歷所有
-        #     存活玩家，若其武器剛被移出白名單，立即隨機改派為目前還允許的
-        #     其中一把。死亡 / 觀戰中的玩家先不動，會在重生時透過 set_weapon
-        #     自動修正。
         allowed = self._allowed_weapons_set()
         for p in self.players.values():
             if p.state != STATE_ALIVE:
@@ -276,6 +277,11 @@ class GameEngine:
 
     # ──────────── Respawn / spectate / 重生 / 觀戰 ────────────
     def request_respawn(self, pid: str) -> None:
+        # EN: Phase 15 — respawn ALWAYS allowed in both PLAYING and POST_GAME
+        #     (POST_GAME is the sandbox brawl — players keep fighting after
+        #     the leaderboard freezes).
+        # zh-TW: Phase 15 — 重生在 PLAYING 與 POST_GAME 兩種狀態都允許
+        #     （POST_GAME 即為沙盒對戰，凍結排行榜後玩家仍可重生繼續廝殺）。
         p = self.players.get(pid)
         if not p or p.state == STATE_ALIVE:
             return
@@ -283,9 +289,6 @@ class GameEngine:
             return
         x, y = self._spawn_position()
         p.max_hp = self.settings.default_bot_hp if p.is_bot else self.settings.default_player_hp
-        # EN: Phase 10 — if the player's stored weapon was banned while they
-        #     were dead, swap to a legal one before they re-enter the arena.
-        # zh-TW: Phase 10 — 玩家死亡期間若武器被禁，重生前先替換為合法武器。
         allowed = self._allowed_weapons_set()
         if p.weapon.name not in allowed:
             cls = WEAPON_REGISTRY.get(self._pick_random_allowed_weapon())
@@ -336,8 +339,19 @@ class GameEngine:
         self._kill(p, None, now)
 
     def admin_reset_match(self) -> None:
+        # EN: Phase 15 — Reset Match returns the world to a fully fresh
+        #     PLAYING state. Wipes EVERY per-player counter (kills/deaths/
+        #     damage), clears the frozen leaderboard, restores HP, and
+        #     respawns every player. Equivalent to "new lobby" without the
+        #     reconnect overhead.
+        # zh-TW: Phase 15 — 重置對戰 = 把世界完全重置為新鮮的 PLAYING 狀態。
+        #     清空每位玩家的計數（擊殺/死亡/傷害）、清掉凍結排行榜、回滿血、
+        #     強制全員重生。等同「全新大廳」但不需要重連。
         self.reset_seq += 1
         self.game_over = False
+        self.match_state = MATCH_PLAYING
+        self.frozen_leaderboard = []
+        self.bullets = []
         if self.settings.game_duration > 0:
             self.game_end_time = time.perf_counter() + self.settings.game_duration
         else:
@@ -354,11 +368,6 @@ class GameEngine:
             p.respawn(x, y)
 
     def admin_kick_bots(self) -> None:
-        # EN: Phase 12 — stress-test scaffolding removed. Now we just walk every
-        #     bot owned by the engine and drop it (also flushing bullets owned
-        #     by the removed bots in the next sim tick when bullets recompute).
-        # zh-TW: Phase 12 — 已移除壓力測試相關代碼。本函式直接遍歷所有 Bot
-        #     並移除（其名下子彈會在下一個模擬 tick 自動清掉）。
         bot_ids = [pid for pid, p in list(self.players.items()) if p.is_bot]
         for pid in bot_ids:
             self.players.pop(pid, None)
@@ -371,10 +380,14 @@ class GameEngine:
             self.settings.game_duration = 0.0
             self.game_end_time = 0.0
             self.game_over = False
+            self.match_state = MATCH_PLAYING
+            self.frozen_leaderboard = []
         else:
             self.settings.game_duration = seconds
             self.game_end_time = now + seconds
             self.game_over = False
+            self.match_state = MATCH_PLAYING
+            self.frozen_leaderboard = []
 
     def admin_adjust_game_timer(self, delta: float) -> None:
         if self.settings.game_duration <= 0 or self.game_end_time <= 0:
@@ -383,8 +396,14 @@ class GameEngine:
         self.game_end_time = max(now + 1, self.game_end_time + delta)
 
     def admin_end_game_now(self) -> None:
+        # EN: Phase 15 — explicit admin "end now" also transitions to POST_GAME
+        #     and freezes the leaderboard immediately (mirrors the timer-expiry
+        #     code path so admin UX is identical to normal time-out).
+        # zh-TW: Phase 15 — 管理員按「立即結束」也會切到 POST_GAME 並立刻凍結
+        #     排行榜（與時間到的流程相同，UX 一致）。
         self.game_over = True
         self.game_end_time = 0.0
+        self._enter_post_game()
 
     def admin_set_all_hp(self, hp: float, target: str = "all") -> None:
         for p in self.players.values():
@@ -421,18 +440,6 @@ class GameEngine:
             current.append(bot.id)
 
     def admin_set(self, key: str, value) -> None:
-        # EN: Phase 12 — admin payloads MUST permanently mutate the global
-        #     `GameSettings` instance so the next snapshot the broadcast loop
-        #     emits already carries the new value. Without this, the admin
-        #     panel briefly flickers back to the prior value while waiting
-        #     for the server to confirm. Type coercion is keyed off the
-        #     CURRENT field type to keep the schema stable, but the value is
-        #     committed via `setattr` *before* any side-effect helper runs.
-        # zh-TW: Phase 12 — 管理員指令必須永久更新全域 `GameSettings`，
-        #     確保下一個 broadcast tick 立刻帶上新值，否則管理員 UI 在
-        #     等待伺服器回覆時會短暫閃回舊值。型別會依目前欄位的型別做
-        #     強制轉換以保持 schema 穩定，但 setattr 一定在所有 side-effect
-        #     helper 之前執行。
         if not key or not hasattr(self.settings, key):
             return
         cur = getattr(self.settings, key)
@@ -447,19 +454,12 @@ class GameEngine:
                 value = str(value)
         except (TypeError, ValueError):
             return
-        # EN: Persist FIRST, then run any sync helpers. Persistence cannot be
-        #     short-circuited by a helper failure.
-        # zh-TW: 先 persist，再跑同步 helper；helper 失敗也不能影響欄位
-        #     已經寫入的事實。
         setattr(self.settings, key, value)
         if key == "team_mode":
             self._sync_team_mode()
         elif key in ("bots_enabled", "bot_count"):
             self._sync_standalone_bots()
         elif key == "allowed_weapons":
-            # EN: Phase 10 mid-game override — reassign alive players whose
-            #     current weapon was just disabled.
-            # zh-TW: Phase 10 比賽中即時覆寫 — 把武器剛被禁掉的存活玩家改派。
             self._sync_allowed_weapons()
 
     def _sync_team_mode(self) -> None:
@@ -488,26 +488,49 @@ class GameEngine:
         while blue < red:
             self.add_bot(team="blue"); blue += 1
 
+    # ──────────── Match state transitions / 對戰狀態切換 ────────────
+    def _enter_post_game(self) -> None:
+        # EN: Phase 15 — freeze the leaderboard with EVERY current player
+        #     (alive, dead, or spectating; bots included if they participated).
+        #     This snapshot is the source of truth for the FINAL STANDINGS UI;
+        #     subsequent kills during the sandbox brawl never alter it.
+        # zh-TW: Phase 15 — 凍結排行榜：包含所有目前在場的玩家（不論生死，
+        #     參與過比賽的 Bot 也算進去）。此快照即為「最終排行榜」UI 的
+        #     資料來源；沙盒對戰期間的擊殺不會更動它。
+        if self.match_state == MATCH_POST_GAME:
+            return
+        self.match_state = MATCH_POST_GAME
+        self.frozen_leaderboard = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "kills": p.kills,
+                "deaths": p.deaths,
+                "damage_dealt": round(p.damage_dealt, 1),
+                "damage_taken": round(p.damage_taken, 1),
+                "is_bot": p.is_bot,
+                "team": p.team,
+                "weapon": p.weapon.name,
+            }
+            for p in self.players.values()
+        ]
+
     # ──────────── Simulation / 模擬 ────────────
     def step(self, dt: float, now: float) -> None:
         self._tick += 1
 
+        # EN: Phase 15 — when the timer expires we set game_over AND enter
+        #     POST_GAME. Players keep playing; the leaderboard is frozen.
+        # zh-TW: Phase 15 — 時間到時同時設定 game_over 並進入 POST_GAME。
+        #     玩家可繼續對戰，但排行榜已凍結。
         if (not self.game_over
                 and self.settings.game_duration > 0
                 and self.game_end_time > 0
                 and now >= self.game_end_time):
             self.game_over = True
-
-        if self.game_over:
-            return
+            self._enter_post_game()
 
         all_players = list(self.players.values())
-        # EN: Phase 12 — pass the admin-tunable focus-fire cap through to
-        #     each BotPlayer.ai_step. Hard-coded "max 2 bots per player"
-        #     is gone; the limit is now `settings.bot_max_attack_limit`.
-        # zh-TW: Phase 12 — 把管理員可調的集火上限傳給每個 Bot 的
-        #     ai_step。原本寫死「每位玩家最多 2 隻 Bot 鎖定」已改用
-        #     `settings.bot_max_attack_limit`。
         max_focus = max(0, int(self.settings.bot_max_attack_limit or 0))
         for p in all_players:
             if isinstance(p, BotPlayer):
@@ -546,10 +569,73 @@ class GameEngine:
         p.x = max(0.0, min(self.world_w - p.w, p.x))
         p.y = max(0.0, min(self.world_h - p.h, p.y))
 
+    @staticmethod
+    def _segment_intersects_aabb(
+        x0: float, y0: float, x1: float, y1: float,
+        bx: float, by: float, bw: float, bh: float,
+    ) -> bool:
+        # EN: Phase 15 — Liang–Barsky line-clip test for "does the line
+        #     segment (x0,y0)→(x1,y1) intersect the AABB at (bx,by,bw,bh)?".
+        #     This is the swept-line CCD primitive that fixes the sniper
+        #     bug: at 1500 px/s × 50 ms tick the bullet jumps 75 px per
+        #     frame; a plain AABB-vs-AABB test only checks the END position
+        #     and misses the player entirely. Liang–Barsky is O(1), branch
+        #     friendly, and accepts a degenerate (x0==x1 && y0==y1) segment
+        #     gracefully (returns True iff the point is inside the bbox).
+        # zh-TW: Phase 15 — Liang–Barsky 線段與 AABB 相交測試：
+        #     回答「線段 (x0,y0)→(x1,y1) 是否穿過 AABB(bx,by,bw,bh)？」
+        #     這是修正狙擊槍 bug 的 CCD 核心：1500 px/s × 50 ms tick
+        #     表示子彈每幀位移 75 px，傳統 AABB 對 AABB 只檢查「終點」位置
+        #     會漏掉玩家。Liang–Barsky 是 O(1)、分支簡潔，能正確處理退化
+        #     線段（x0==x1 且 y0==y1，視為點對 AABB 測試）。
+        dx = x1 - x0
+        dy = y1 - y0
+        # Degenerate segment → point-in-AABB
+        if dx == 0.0 and dy == 0.0:
+            return bx <= x0 <= bx + bw and by <= y0 <= by + bh
+        t_enter, t_exit = 0.0, 1.0
+        for p, q in (
+            (-dx, x0 - bx),
+            ( dx, (bx + bw) - x0),
+            (-dy, y0 - by),
+            ( dy, (by + bh) - y0),
+        ):
+            if p == 0.0:
+                if q < 0.0:
+                    return False
+            elif p < 0.0:
+                t = q / p
+                if t > t_exit:
+                    return False
+                if t > t_enter:
+                    t_enter = t
+            else:
+                t = q / p
+                if t < t_enter:
+                    return False
+                if t < t_exit:
+                    t_exit = t
+        return t_enter <= t_exit
+
     def _resolve_bullet_hits(self, now: float) -> None:
+        # EN: Phase 15 — swept-line CCD. For each live bullet we form a line
+        #     segment from (prev_cx, prev_cy) → (current center) and test it
+        #     against every alive non-owner player AABB. This guarantees a
+        #     fast sniper shot cannot tunnel past a player. On hit, damage
+        #     is propagated from the bullet (which inherited it from the
+        #     weapon at spawn-time) — the Sniper bug fix is end-to-end:
+        #     weapon.damage → Bullet.spawn(damage=) → b.damage → take_damage.
+        # zh-TW: Phase 15 — 掃掠線 CCD。每顆存活子彈用
+        #     (prev_cx, prev_cy) → (現在中心) 組成線段，逐一測試所有「存活、
+        #     非射手」玩家的 AABB；保證高速狙擊彈不會穿透玩家。命中時直接
+        #     使用子彈內的 damage（spawn 時由 weapon 注入）。狙擊槍 bug
+        #     修正是端到端的：weapon.damage → Bullet.spawn(damage=) →
+        #     b.damage → take_damage。
         for b in self.bullets:
             if not b.alive:
                 continue
+            cx_now = b.x + b.w / 2.0
+            cy_now = b.y + b.h / 2.0
             owner = self.players.get(b.owner_id)
             for p in self.players.values():
                 if p.state != STATE_ALIVE or p.id == b.owner_id:
@@ -557,10 +643,21 @@ class GameEngine:
                 if (self.settings.team_mode and owner and owner.team
                         and owner.team == p.team):
                     continue
-                if b.collides_with(p):
-                    killed = p.take_damage(b.damage)
+                # Inflate target AABB by the bullet's radius so a bullet
+                # that grazes the edge of the player still counts as a hit.
+                # This matches the pre-Phase-15 AABB-vs-AABB feel exactly.
+                inflated_w = p.w + b.w
+                inflated_h = p.h + b.h
+                inflated_x = p.x - b.w / 2.0
+                inflated_y = p.y - b.h / 2.0
+                if self._segment_intersects_aabb(
+                    b.prev_cx, b.prev_cy, cx_now, cy_now,
+                    inflated_x, inflated_y, inflated_w, inflated_h,
+                ):
+                    dmg = float(b.damage)
+                    killed = p.take_damage(dmg)
                     if owner is not None:
-                        owner.damage_dealt += b.damage
+                        owner.damage_dealt += dmg
                     b.alive = False
                     if killed:
                         self._kill(p, owner, now)
@@ -587,37 +684,6 @@ class GameEngine:
             victim.killed_by_weapon = ""
 
     # ──────────── Networking — minified payload / 網路通訊 — 精簡封包 ────────────
-    # EN: Phase 9 wire format. We emit ultra-short keys to slash JSON size on
-    #     the broadcast hot-path (20 Hz × N players × N viewers). The frontend
-    #     `expandSnapshot()` helper reverses this mapping back into the
-    #     descriptive shape used by rendering code.
-    #     Per-player keys:
-    #       i = id, nm = name, x/y = pos, h = hp, mh = max_hp,
-    #       a = angle, k = kills, d = deaths,
-    #       dd = damage_dealt, dt = damage_taken, wp = weapon name,
-    #       s = state ('alive'|'dead'|'spectating'),
-    #       ra = respawn_at, b = is_bot (1/0), tm = team,
-    #       kn = killed_by_name, kw = killed_by_weapon, al = alive (1/0).
-    #     Per-bullet keys:
-    #       i = id, x/y = pos, o = owner_id, dm = damage, al = alive (1/0).
-    #     Top-level keys:
-    #       type='state', t = tick, n = now, wo = world{w,h}, st = settings,
-    #       go = game_over, tr = time_remaining, rs = reset_seq,
-    #       ps = players, bs = bullets.
-    #     Width/height are constant (player 28×28, bullet 6×6) and restored
-    #     client-side from `wo` / hard-coded constants — they never travel.
-    # zh-TW: Phase 9 廣播格式。改用極短鍵名以削減 JSON 大小（20 Hz × N 玩家 × N 觀眾）。
-    #     前端 `expandSnapshot()` 會把短鍵重新展開為渲染程式使用的長鍵格式。
-    #     玩家鍵對照：
-    #       i = id, nm = 名稱, x/y = 座標, h = hp, mh = 最大 hp,
-    #       a = 角度, k = 擊殺, d = 死亡,
-    #       dd = 輸出傷害, dt = 承受傷害, wp = 武器名稱,
-    #       s = 狀態（alive/dead/spectating）,
-    #       ra = 重生時間, b = 是否為 Bot（1/0）, tm = 隊伍,
-    #       kn = 擊殺者名稱, kw = 擊殺武器, al = 是否存活（1/0）。
-    #     子彈鍵對照：i, x, y, o = 擁有者 id, dm = 傷害, al = 存活旗標。
-    #     寬高為常數（玩家 28×28、子彈 6×6），不在線上傳輸，由前端還原。
-
     @staticmethod
     def _player_short(p: Player) -> dict:
         return {
@@ -644,13 +710,6 @@ class GameEngine:
 
     @staticmethod
     def _bullet_short(b: Bullet) -> dict:
-        # EN: Phase 10 — only emit bw/bh on the wire when the bullet hitbox
-        #     differs from the 6×6 default (rocket = 14×14). Keeps standard
-        #     bullets at the smallest payload while still letting clients
-        #     render heavy projectiles at the correct size.
-        # zh-TW: Phase 10 — 子彈的 bw/bh 只有在 hitbox 不是預設 6×6 時才送
-        #     （目前只有 rocket=14×14）。一般子彈仍維持最小封包，重型彈頭
-        #     也能在前端正確放大繪製。
         d = {
             "i": b.id,
             "x": round(b.x, 2),
@@ -665,9 +724,16 @@ class GameEngine:
         return d
 
     def snapshot(self) -> dict:
-        # EN: Build the authoritative state snapshot broadcast each tick.
-        #     Uses the Phase 9 minified key schema documented above.
-        # zh-TW: 建構每 tick 廣播的權威狀態快照，採用 Phase 9 短鍵格式（如上說明）。
+        # EN: Phase 15 — snapshot now also carries `ms` (match state) and
+        #     `fl` (frozen leaderboard, only populated in POST_GAME) so the
+        #     client can render the final standings overlay even after
+        #     respawning into the sandbox brawl. `dev` (device fingerprints)
+        #     is intentionally OMITTED from this method; admin-only payload
+        #     is appended by `admin_snapshot()` (see below).
+        # zh-TW: Phase 15 — 快照新增 `ms`（match state）與 `fl`（凍結排行榜，
+        #     僅 POST_GAME 有值），讓前端在沙盒對戰中仍可呈現最終排行榜。
+        #     `dev`（設備指紋）刻意「不」放在這裡；管理員專屬資料由
+        #     `admin_snapshot()` 額外附加（見下方）。
         now = time.perf_counter()
         if self.settings.game_duration > 0 and self.game_end_time > 0 and not self.game_over:
             time_remaining = round(max(0.0, self.game_end_time - now), 1)
@@ -693,37 +759,55 @@ class GameEngine:
                 "default_player_hp": self.settings.default_player_hp,
                 "default_bot_hp": self.settings.default_bot_hp,
                 "allowed_weapons": self.settings.allowed_weapons,
-                # EN: Phase 12 — focus-fire cap (0 = unlimited).
-                # zh-TW: Phase 12 — 集火上限（0 = 不限制）。
                 "bot_max_attack_limit": self.settings.bot_max_attack_limit,
             },
             "go": self.game_over,
             "tr": time_remaining,
             "rs": self.reset_seq,
+            "ms": self.match_state,
+            "fl": self.frozen_leaderboard if self.match_state == MATCH_POST_GAME else [],
             "ps": [self._player_short(p) for p in self.players.values()],
             "bs": [self._bullet_short(b) for b in self.bullets],
         }
 
+    def admin_snapshot(self) -> dict:
+        # EN: Phase 15 — admin-only super-set. Includes the regular snapshot
+        #     plus a `dev` map of player_id → {ip, user_agent}. This payload
+        #     is sent ONLY to admin WebSockets; player and director sockets
+        #     never see device fingerprints.
+        # zh-TW: Phase 15 — 管理員專屬擴充版快照。除了一般快照外，多帶
+        #     `dev` 對照表 player_id → {ip, user_agent}。此 payload 僅送往
+        #     管理員 WS；一般玩家與導播 WS 看不到設備指紋。
+        snap = self.snapshot()
+        snap["dev"] = {
+            pid: {"ip": d.ip, "ua": d.user_agent}
+            for pid, d in self.devices.items()
+        }
+        return snap
+
     async def broadcast(self) -> None:
-        # EN: Send the snapshot to all player, admin, and director connections.
-        # zh-TW: 將快照廣播給所有玩家、管理員與導播連線。
-        payload = json.dumps(self.snapshot(), separators=(",", ":"))
+        # EN: Phase 15 — players + directors get the regular snapshot;
+        #     admins get the augmented `admin_snapshot()` with device info.
+        # zh-TW: Phase 15 — 玩家與導播收到一般快照；管理員收到含設備
+        #     資訊的 `admin_snapshot()`。
+        public_payload = json.dumps(self.snapshot(), separators=(",", ":"))
+        admin_payload = json.dumps(self.admin_snapshot(), separators=(",", ":"))
         dead_pids: List[str] = []
         for pid, ws in self.connections.items():
             try:
-                await ws.send_text(payload)
+                await ws.send_text(public_payload)
             except Exception:
                 dead_pids.append(pid)
         dead_admins: List[str] = []
         for aid, ws in self.admin_ws.items():
             try:
-                await ws.send_text(payload)
+                await ws.send_text(admin_payload)
             except Exception:
                 dead_admins.append(aid)
         dead_directors: List = []
         for ws in list(self.directors):
             try:
-                await asyncio.wait_for(ws.send_text(payload), timeout=0.05)
+                await asyncio.wait_for(ws.send_text(public_payload), timeout=0.05)
             except Exception:
                 dead_directors.append(ws)
         for ws in dead_directors:
@@ -735,21 +819,12 @@ class GameEngine:
             self.remove_admin(aid)
 
     async def run(self) -> None:
-        # EN: Main simulation loop. When `self.players` is empty we await the
-        #     wake event and consume zero CPU until a player joins
-        #     (Phase 9 idle-pause). Bullets are also flushed during idle so
-        #     no stale projectiles linger when a new match begins.
-        # zh-TW: 主模擬 loop。當沒有玩家時，await 喚醒事件，CPU 完全閒置，
-        #     直到有人加入才繼續（Phase 9 閒置暫停）。閒置時順手清空殘留子彈，
-        #     避免新局開始時還有舊子彈。
         self._running = True
         if self._wake is None:
             self._wake = asyncio.Event()
         last = time.perf_counter()
         while self._running:
             if not self.players:
-                # EN: Idle — drop bullets and sleep until a player joins.
-                # zh-TW: 閒置 — 清空子彈並等待玩家加入。
                 if self.bullets:
                     self.bullets = []
                 self._wake.clear()
@@ -770,8 +845,6 @@ class GameEngine:
 
     def stop(self) -> None:
         self._running = False
-        # EN: Wake any pending await on the idle event so run() can exit cleanly.
-        # zh-TW: 喚醒任何 await 中的閒置事件，讓 run() 能順利結束。
         if self._wake is not None:
             self._wake.set()
 

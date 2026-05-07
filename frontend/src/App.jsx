@@ -18,7 +18,7 @@
  *     - 連點 5 下管理員觸發 → admin_ok 後切換為全螢幕 AdminPanel。
  */
 import { useEffect, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { useI18n } from "./i18n.jsx";
 import GameCanvas from "./components/GameCanvas.jsx";
@@ -26,7 +26,7 @@ import DirectorCanvas from "./components/DirectorCanvas.jsx";
 import AdminPanel from "./components/AdminPanel.jsx";
 import PortraitLock from "./components/PortraitLock.jsx";
 import NotFound from "./components/NotFound.jsx";
-import useGameSocket from "./hooks/useGameSocket.js";
+import Docs from "./components/Docs.jsx";
 import expandSnapshot from "./hooks/expandSnapshot.js";
 
 const WS_URL = (() => {
@@ -49,8 +49,19 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<RootRoute />} />
-        {/* EN: Catch-all — anything that isn't "/" renders the cyberpunk 404.
-            zh-TW: catch-all — 非 "/" 路徑一律渲染賽博龐克 404 頁面。 */}
+        {/* EN: Phase 15 — native React docs (replaces MkDocs).
+                /docs alone redirects to /docs/en for back-compat with the
+                old MkDocs landing URL. /docs/en and /docs/zh-TW are the
+                two strictly-monolingual entry points. Any other /docs/*
+                slug is treated as English.
+            zh-TW: Phase 15 — 原生 React 文件（取代 MkDocs）。
+                /docs 直接 302 到 /docs/en，與舊版 MkDocs landing URL
+                相容；/docs/en、/docs/zh-TW 是兩條嚴格單一語系入口；
+                其他 /docs/* 一律視為英文。 */}
+        <Route path="/docs" element={<Navigate to="/docs/en" replace />} />
+        <Route path="/docs/:lang" element={<Docs />} />
+        {/* EN: Catch-all — anything else renders the cyberpunk 404.
+            zh-TW: catch-all — 其他路徑一律渲染賽博龐克 404 頁面。 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
@@ -99,8 +110,14 @@ function Lobby({ wsUrl }) {
   const clickStampsRef = useRef([]);
 
   // EN: For standalone admin mode — WebSocket without joining as player.
+  //     The ready flag is set by the admin handshake side-effect; consumers
+  //     read it via setAdminWsReady -> setView path. We keep the setter to
+  //     preserve the explicit reset on close.
   // zh-TW: 獨立管理員模式 — 不以玩家身份加入的 WebSocket。
-  const [adminWsReady, setAdminWsReady] = useState(false);
+  //     ready 旗標由管理員握手 side-effect 設定，主要透過 setAdminWsReady
+  //     在關閉時顯式 reset；讀取端走 view = "admin" 的轉換。
+  // eslint-disable-next-line no-unused-vars
+  const [_adminWsReady, setAdminWsReady] = useState(false);
   const adminStateRef = useRef(null);
   const adminWsRef = useRef(null);
   const adminSendRef = useRef(() => {});
@@ -310,15 +327,29 @@ function Lobby({ wsUrl }) {
                 MkDocs StaticFiles 掛載提供），移除過去 dev 雙行程時期遺留
                 的 8001 連結。 */}
         <div className="br-lang-area">
-          <a
-            href="/docs"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="br-lang-pill"
-            style={{ textDecoration: 'none', color: 'var(--br-cyan)', fontWeight: 'bold' }}
-          >
-            【{t.devLog}】
-          </a>
+          {/* EN: Phase 15 — Docs / 開發日誌 button is wrapped in the same
+                  `.br-lang-toggle / .br-lang-pills` container as the language
+                  toggle so they share the rounded glass-pill chrome. The
+                  button itself uses the same `.br-lang-pill` class with
+                  `is-active` styling for visual parity. The link points at
+                  the language-aware native React docs route, so 中文 users
+                  land on /docs/zh-TW and EN/VI users land on /docs/en.
+              zh-TW: Phase 15 — 「Docs / 開發日誌」按鈕被包進與語言切換相同的
+                  `.br-lang-toggle / .br-lang-pills` 容器中，共用同一組
+                  圓角玻璃藥丸樣式；按鈕本身沿用 `.br-lang-pill` + `is-active`
+                  類別以達成視覺一致。連結會依當前語系直接指向新版 React
+                  Docs 路由：中文 → /docs/zh-TW、EN/VI → /docs/en。 */}
+          <div className="br-lang-toggle" aria-label="Documentation">
+            <div className="br-lang-pills">
+              <a
+                href={lang === "zh" ? "/docs/zh-TW" : "/docs/en"}
+                className="br-lang-pill is-active"
+                style={{ textDecoration: "none" }}
+              >
+                {t.devLog}
+              </a>
+            </div>
+          </div>
           <div className="br-lang-toggle" role="tablist" aria-label="Language">
             <div className="br-lang-pills">
               {[
