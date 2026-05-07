@@ -116,6 +116,10 @@ def _admin_settings_dict() -> dict:
         "bot_count": engine.settings.bot_count,
         "default_player_hp": engine.settings.default_player_hp,
         "default_bot_hp": engine.settings.default_bot_hp,
+        # EN: Phase 12 — focus-fire cap; surfaced so the admin panel
+        #     can render the slider on first paint.
+        # zh-TW: Phase 12 — 集火上限；讓管理員面板首次渲染就能拿到值。
+        "bot_max_attack_limit": engine.settings.bot_max_attack_limit,
     }
 
 
@@ -222,12 +226,6 @@ async def ws_endpoint(ws: WebSocket):
                     new_pw = str(msg.get("value", "")).strip()
                     if new_pw:
                         engine.settings.admin_password = new_pw
-                # EN: Phase 11 — admin-controlled stress test.
-                # zh-TW: Phase 11 — 管理員控制的壓力測試。
-                elif mtype == "admin_stress_test":
-                    bot_count = int(msg.get("bot_count", 50))
-                    duration = float(msg.get("duration_seconds", 60))
-                    engine.stress_test_start(bot_count, duration)
                 elif mtype == "ping":
                     await ws.send_text(json.dumps({"type": "pong", "t": msg.get("t")}))
         except WebSocketDisconnect:
@@ -313,12 +311,6 @@ async def ws_endpoint(ws: WebSocket):
                 new_pw = str(msg.get("value", "")).strip()
                 if new_pw:
                     engine.settings.admin_password = new_pw
-            # EN: Phase 11 — admin-controlled stress test (legacy path).
-            # zh-TW: Phase 11 — 管理員控制的壓力測試（舊式路徑）。
-            elif mtype == "admin_stress_test" and is_admin:
-                bot_count = int(msg.get("bot_count", 50))
-                duration = float(msg.get("duration_seconds", 60))
-                engine.stress_test_start(bot_count, duration)
             elif mtype == "ping":
                 await ws.send_text(json.dumps({"type": "pong", "t": msg.get("t")}))
     except WebSocketDisconnect:
@@ -362,48 +354,67 @@ def _resolve_frontend_dist() -> Path | None:
 
 
 def _resolve_mkdocs_site() -> Path | None:
-    # EN: Phase 10 — locate the built MkDocs static site
-    #     (mkdocs build → docs/site by default). Resolution mirrors
-    #     `_resolve_frontend_dist` so the same env-override pattern works:
+    # EN: Phase 10 / 12 — locate the built MkDocs static site
+    #     (mkdocs build → docs/site by default). Resolution always returns
+    #     an *absolute* Path (Path.resolve()) so the StaticFiles mount works
+    #     regardless of the process CWD (Docker, Railway, dev runs, tests).
+    #     Resolution mirrors `_resolve_frontend_dist`:
     #       1. $MKDOCS_SITE_DIR override (Dockerfile sets this).
-    #       2. ../docs/site relative to this file.
+    #       2. ../docs/site absolute path relative to this file.
     #       3. /app/docs/site (Docker layout).
     #     Returns None if the docs were never built — the route is then
     #     skipped silently (dev mode without `mkdocs build`).
-    # zh-TW: Phase 10 — 找到 MkDocs build 出來的靜態站台目錄
-    #     （mkdocs build 預設 → docs/site）。解析順序與 `_resolve_frontend_dist`
-    #     相同：
+    # zh-TW: Phase 10 / 12 — 找到 MkDocs build 出來的靜態站台目錄
+    #     （mkdocs build 預設輸出在 docs/site）。一律呼叫 Path.resolve()
+    #     回傳絕對路徑，避免因為 process CWD 不同（Docker、Railway、本機
+    #     dev、測試）導致 StaticFiles 找不到目錄。解析順序與
+    #     `_resolve_frontend_dist` 相同：
     #       1. $MKDOCS_SITE_DIR 環境變數覆寫（Dockerfile 已設定）。
-    #       2. 相對本檔的 ../docs/site。
+    #       2. 與本檔同層的 ../docs/site 絕對路徑。
     #       3. /app/docs/site（Docker 佈局）。
-    #     若文件尚未 build 出來則回傳 None，路由會被靜默略過
-    #     （本機未跑 mkdocs build 時）。
+    #     若文件尚未 build 出來則回傳 None，路由會被靜默略過。
     candidates: list[Path] = []
     env_path = os.environ.get("MKDOCS_SITE_DIR")
     if env_path:
-        candidates.append(Path(env_path))
+        candidates.append(Path(env_path).resolve())
     here = Path(__file__).resolve().parent
-    candidates.append(here.parent / "docs" / "site")
-    candidates.append(Path("/app/docs/site"))
+    candidates.append((here.parent / "docs" / "site").resolve())
+    candidates.append(Path("/app/docs/site").resolve())
     for p in candidates:
         if p.is_dir() and (p / "index.html").is_file():
             return p
     return None
 
 
-# ─── /docs — MkDocs static site (Phase 10) ───
+# ─── /docs — MkDocs static site (Phase 10 / 12) ───
 # EN: Mount BEFORE the SPA catch-all so /docs/** resolves to the MkDocs site
 #     instead of falling back to React's index.html. `html=True` lets
 #     StaticFiles serve `/docs/foo/` as `/docs/foo/index.html`.
+#     Phase 12 — log the resolution at import-time so deployments where
+#     `mkdocs build` was skipped surface a clear warning in the container
+#     logs (instead of silently 404-ing /docs).
 # zh-TW: 在 SPA catch-all 之前掛載，這樣 /docs/** 會命中 MkDocs 而非
 #     React 的 index.html。`html=True` 會自動把 `/docs/foo/` 解析為
 #     `/docs/foo/index.html`。
+#     Phase 12 — 在 import 期間 log 解析結果；若 deployment 漏跑
+#     `mkdocs build`，container log 會明確警告，而非 /docs 安靜 404。
 _mkdocs_site = _resolve_mkdocs_site()
 if _mkdocs_site is not None:
     app.mount(
         "/docs",
         StaticFiles(directory=str(_mkdocs_site), html=True),
         name="mkdocs",
+    )
+    print(f"[main] MkDocs site mounted at /docs from {_mkdocs_site}")
+else:
+    # EN: Defensive — emit a one-line warning so deployment logs flag the
+    #     missing build instead of returning a confusing FastAPI 404.
+    # zh-TW: 防呆 — 印一行警告讓部署 log 直接看到問題，避免 /docs 404 卻
+    #     不知道是 mkdocs build 沒跑造成的。
+    print(
+        "[main] WARNING: MkDocs site not found. /docs will be served by the "
+        "SPA fallback (which renders the React 404 page). Run `mkdocs build` "
+        "or set $MKDOCS_SITE_DIR to fix."
     )
 
 
@@ -415,24 +426,39 @@ if _dist is not None:
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    # EN: Static files at the dist root (favicon, robots.txt, etc.).
-    # zh-TW: dist 根目錄下的靜態資源（favicon、robots.txt 等）。
+    # EN: Phase 12 — SPA history fallback. Any path that isn't:
+    #       - a real file under the Vite `dist/` output, OR
+    #       - reserved for the API / docs / WebSocket
+    #     gets served `index.html`. React Router then runs in the browser
+    #     and matches the URL against its <Routes>; unknown URLs hit the
+    #     "*" catch-all and render the cyberpunk <NotFound /> component.
+    #     This is the correct way to support deep-linking + SPA-side 404s.
+    # zh-TW: Phase 12 — SPA history fallback。凡不是
+    #       - Vite `dist/` 下的真實檔案，
+    #       - 也不是 API / docs / WebSocket 保留路徑
+    #     的網址，都回 `index.html`。瀏覽器端的 React Router 接手 routing；
+    #     未知網址會落到 "*" catch-all 並渲染賽博龐克 <NotFound />。這是
+    #     SPA 同時支援 deep-link 與自訂 404 的標準做法。
+    _RESERVED_PREFIXES = (
+        "api/", "api-docs", "api-redoc",
+        "ws", "health", "docs", "docs/",
+        "assets/",
+    )
+
     @app.get("/{filename:path}", include_in_schema=False)
     async def spa_fallback(filename: str):
-        # EN: Skip API/WS-style and docs-style paths so they don't collide
-        #     with this catch-all. /docs is served by the MkDocs StaticFiles
-        #     mount above; /api-docs and /api-redoc are FastAPI's own.
-        # zh-TW: 跳過 API/WS 與文件相關路徑，避免與 catch-all 衝突。
-        #     /docs 由上面的 MkDocs StaticFiles 提供；
-        #     /api-docs、/api-redoc 由 FastAPI 自己處理。
-        if filename.startswith((
-            "api/", "api-docs", "api-redoc",
-            "ws", "health", "docs", "docs/",
-        )):
+        # EN: Reserved server-side paths must never silently fall through to
+        #     index.html — that would hide real backend bugs (e.g. an /api/
+        #     route that was renamed). Return a hard 404 instead.
+        # zh-TW: API / docs / WS 等保留路徑絕不能被 SPA fallback 吞掉，否則
+        #     後端的 bug（例如 /api/ 路由改名）會被靜默隱藏。改為直接 404。
+        if filename.startswith(_RESERVED_PREFIXES):
             raise HTTPException(status_code=404)
         candidate = _dist / filename
         if filename and candidate.is_file():
             return FileResponse(candidate)
-        # EN: SPA history fallback — return index.html for any unknown route.
-        # zh-TW: SPA 歷史路由 fallback — 任何未知路徑都回 index.html。
+        # EN: SPA history fallback — return index.html for any unknown route
+        #     so the React Router catch-all can render <NotFound />.
+        # zh-TW: SPA 歷史路由 fallback — 未知網址一律回 index.html，讓
+        #     React Router 的 catch-all 能渲染 <NotFound />。
         return FileResponse(_dist / "index.html")

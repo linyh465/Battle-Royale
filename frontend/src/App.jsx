@@ -1,24 +1,31 @@
 /**
  * EN: App.jsx — Merged lobby with new UI + standalone admin routing.
- *     - ?role=director → DirectorCanvas (bypass lobby).
- *     - 5-click admin trigger → after admin_ok, route to full-screen AdminPanel
- *       (admin does NOT join as a player and does NOT mount GameCanvas).
- *     - Normal player → Lobby → GameCanvas.
- *     - Language toggle (EN / 中文) in lobby header.
+ *     Phase 12: wrapped in <BrowserRouter>. The lobby still owns its own
+ *     internal state machine (lobby → player → admin) at "/", but a global
+ *     catch-all route ("*") now renders <NotFound /> for any URL the SPA
+ *     does not own. The backend's SPA fallback returns index.html for
+ *     unknown paths so React Router can pick the matching route.
+ *     - "/" → Lobby (or DirectorCanvas if ?role=director).
+ *     - "*" → NotFound (cyberpunk 404).
+ *     - 5-click admin trigger → after admin_ok, route to full-screen AdminPanel.
  * zh-TW: App.jsx — 合併新 UI 的大廳 + 獨立管理員路由。
- *     - ?role=director → DirectorCanvas（跳過大廳）。
- *     - 連點 5 下管理員觸發 → admin_ok 後導向全螢幕 AdminPanel
- *       （管理員不會加入為玩家，也不會掛載 GameCanvas）。
- *     - 一般玩家 → 大廳 → GameCanvas。
- *     - 大廳頂部的語言切換 (EN / 中文)。
+ *     Phase 12：以 <BrowserRouter> 包裹整支 app。大廳仍維持自己的內部狀態
+ *     機（lobby → player → admin）並只匹配 "/"；catch-all 路由（"*"）
+ *     會渲染 <NotFound />，處理 SPA 沒有定義的網址。後端 SPA fallback
+ *     會把未知路徑回傳 index.html，讓 React Router 接手 routing。
+ *     - "/" → 大廳（若 ?role=director 則改顯示 DirectorCanvas）。
+ *     - "*" → NotFound（賽博龐克 404 頁面）。
+ *     - 連點 5 下管理員觸發 → admin_ok 後切換為全螢幕 AdminPanel。
  */
 import { useEffect, useRef, useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { useI18n } from "./i18n.jsx";
 import GameCanvas from "./components/GameCanvas.jsx";
 import DirectorCanvas from "./components/DirectorCanvas.jsx";
 import AdminPanel from "./components/AdminPanel.jsx";
 import PortraitLock from "./components/PortraitLock.jsx";
+import NotFound from "./components/NotFound.jsx";
 import useGameSocket from "./hooks/useGameSocket.js";
 import expandSnapshot from "./hooks/expandSnapshot.js";
 
@@ -32,12 +39,32 @@ const WS_URL = (() => {
 const ROLE = new URLSearchParams(location.search).get("role");
 
 export default function App() {
-  // EN: Director View bypasses the lobby entirely.
-  // zh-TW: 導播視角直接略過大廳。
+  // EN: Phase 12 — top-level <BrowserRouter> so any deep-linked URL the SPA
+  //     does not own falls through to <NotFound />. The lobby itself still
+  //     handles director / player / admin views via internal state.
+  // zh-TW: Phase 12 — 在最外層加上 <BrowserRouter>，任何 SPA 不認識的網址
+  //     都會 fallthrough 到 <NotFound />。大廳本身仍透過內部 state 切換
+  //     導播 / 玩家 / 管理員視圖。
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<RootRoute />} />
+        {/* EN: Catch-all — anything that isn't "/" renders the cyberpunk 404.
+            zh-TW: catch-all — 非 "/" 路徑一律渲染賽博龐克 404 頁面。 */}
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+function RootRoute() {
+  // EN: Director View bypasses the lobby entirely (kept on "/" with a query
+  //     flag so production deep-links such as /?role=director still work).
+  // zh-TW: 導播視角直接略過大廳（透過 "/" 上的 query 參數啟動，以保留
+  //     /?role=director 這類舊有部署網址）。
   if (ROLE === "director") {
     return <DirectorCanvas wsUrl={WS_URL} />;
   }
-
   return <Lobby wsUrl={WS_URL} />;
 }
 
@@ -273,17 +300,24 @@ function Lobby({ wsUrl }) {
           {adminPasswordPending && <span className="br-badge br-badge--admin">{t.admin}</span>}
         </div>
 
-        {/* EN: Language toggle — EN / 中文 / Tiếng Việt (responsive, z-indexed)
-            zh-TW: 語言切換 — EN / 中文 / Tiếng Việt（響應式、高 z-index） */}
+        {/* EN: Language toggle — EN / 中文 / Tiếng Việt (responsive, z-indexed).
+                Phase 12: dev-log link now points at the same-origin /docs path
+                served by the MkDocs StaticFiles mount in main.py. The old
+                hard-coded port 8001 reference (relic of the dual-process dev
+                layout) has been removed.
+            zh-TW: 語言切換 — EN / 中文 / Tiếng Việt（響應式、高 z-index）。
+                Phase 12：開發日誌連結改為同網域下的 /docs（由 main.py 的
+                MkDocs StaticFiles 掛載提供），移除過去 dev 雙行程時期遺留
+                的 8001 連結。 */}
         <div className="br-lang-area">
           <a
-            href={`http://${location.hostname}:8001`}
+            href="/docs"
             target="_blank"
             rel="noopener noreferrer"
             className="br-lang-pill"
             style={{ textDecoration: 'none', color: 'var(--br-cyan)', fontWeight: 'bold' }}
           >
-            【開發日誌】
+            【{t.devLog}】
           </a>
           <div className="br-lang-toggle" role="tablist" aria-label="Language">
             <div className="br-lang-pills">

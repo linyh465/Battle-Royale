@@ -23,6 +23,8 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Setup: setup.md
+  - Gameplay Mechanics: gameplay_mechanics.md
+  - Routing Guide: routing_guide.md
   - Development Log: development_log.md
   - Modification Guide: modification_guide.md
   - UI Components: ui_components.md

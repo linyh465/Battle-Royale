@@ -1,7 +1,7 @@
 # Gameplay Mechanics — Continuous Deathmatch
 # 遊戲機制 — 持續餘燼模式
 
-> **Version / 版本:** Phase 10
+> **Version / 版本:** Phase 12
 > **Last updated / 最後更新:** 2026-05-07
 
 ---
@@ -308,3 +308,83 @@ weapon automatically.
 **zh-TW:** 大廳每 3 秒輪詢 `/api/settings`，並渲染全部六張武器卡。ID
 不在 `allowed_weapons` 中的卡片會變灰且無法點擊；若玩家目前選中的武器
 在輪詢期間被停用，大廳會自動切到第一個還允許的武器。
+
+---
+
+## 9. Phase 12 Updates / Phase 12 更新
+
+### 9.1 Bot Focus-Fire Cap (`bot_max_attack_limit`) / Bot 集火上限
+
+**EN:**
+A new `GameSettings.bot_max_attack_limit` field caps the number of bots
+that may simultaneously target the same human player. The previous
+hard-coded value of `2` (in `models/bot.py`) is gone — the engine reads
+the admin-tunable cap each tick and passes it into `BotPlayer.ai_step`.
+A value of `0` disables the cap entirely (bots will swarm the closest
+player). Default: `2`.
+
+The Admin Panel exposes this as a numeric input under **Bot Management →
+Bots Targeting One Player (max)**.
+
+**zh-TW:**
+新增 `GameSettings.bot_max_attack_limit` 欄位，限制可同時鎖定同一名玩家
+的 Bot 數量。原本寫死於 `models/bot.py` 的 `2` 已移除 — 引擎每 tick 把
+管理員可調的上限傳入 `BotPlayer.ai_step`。設為 `0` 代表不限制（所有 Bot
+會圍攻最近的玩家）。預設：`2`。
+
+管理員面板於「機器人管理 → 單一玩家可被多少 Bot 集火」中提供數字輸入。
+
+### 9.2 Admin Toggle State Sync / 管理員 Toggle 狀態同步
+
+**EN:**
+Phase 12 fixes a long-standing flicker where toggles (Weapons / Leaderboard
+columns / Team Mode / Bots Enabled) briefly snapped back to their old
+value between the click and the next server snapshot. The fix is
+"optimistic-with-confirmation":
+
+1. Each toggleable setting writes a *pending* value to a local override
+   the moment the admin clicks it.
+2. The local override is read in preference to the snapshot.
+3. Once a snapshot reports the same value the override clears; the UI
+   transitions back to the canonical server state with no visible flicker.
+
+The backend mirrors this guarantee: `engine.admin_set` now calls
+`setattr(...)` BEFORE running any sync helpers, so the very next
+broadcast tick already carries the new value.
+
+**zh-TW:**
+Phase 12 修正 toggle 在點擊到伺服器確認之間短暫閃回舊值的長期問題。
+修法為「樂觀更新 + 伺服器確認後清除」：
+
+1. 點擊瞬間就把 pending 值寫入本地 override。
+2. 渲染時 override 優先於 snapshot。
+3. 下一個 snapshot 回報相同值即清除 override，UI 自然過渡回伺服器
+   權威狀態，肉眼看不到閃爍。
+
+後端同步強化：`engine.admin_set` 一律先 `setattr(...)` 再跑 sync
+helper，下一個 broadcast tick 必定帶上新值。
+
+### 9.3 Stress Test Removal / 壓力測試移除
+
+**EN:** The Phase 11 server stress test (admin-spawned bot wave + auto
+cleanup) has been removed in Phase 12. Both the backend code paths
+(`engine.stress_test_start`, `_stress_test_cleanup`, the
+`admin_stress_test` WS handler) and the frontend Admin Panel section
+have been deleted. `admin_kick_bots` still works for ad-hoc cleanup of
+all bots.
+
+**zh-TW:** Phase 11 伺服器壓力測試（管理員生成 Bot 波 + 自動清理）已於
+Phase 12 完整移除。後端 `engine.stress_test_start`、
+`_stress_test_cleanup`、`admin_stress_test` WebSocket 處理器，以及前端
+管理員面板對應區塊全部刪除。如需臨時清掉所有 Bot，仍可使用
+`admin_kick_bots`。
+
+### 9.4 Custom 404 — see `routing_guide.md` / 自訂 404 — 詳見 `routing_guide.md`
+
+**EN:** Phase 12 also introduces a cyberpunk-styled 404 page rendered
+by React Router for any URL the SPA does not own. The frontend &
+backend wiring is documented in **`routing_guide.md`**.
+
+**zh-TW:** Phase 12 同時新增了賽博龐克風格的 404 頁面，由 React Router
+針對任何 SPA 沒有定義的網址渲染。前後端串接細節記載於
+**`routing_guide.md`**。

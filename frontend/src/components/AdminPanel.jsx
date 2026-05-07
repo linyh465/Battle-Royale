@@ -1,39 +1,39 @@
 /**
- * EN: AdminPanel — Phase 10 refactor.
- *     Production users hit hard input lag because the panel was driven by a
- *     250 ms tick that re-read state from a high-frequency (20 Hz) WebSocket.
- *     Every keystroke fought a re-render that snapped the input back to the
- *     server's last-broadcast value.
+ * EN: AdminPanel — Phase 10 → Phase 12.
+ *     Phase 10 fixed input lag (memoised <NumSetting> / <TextSetting>).
+ *     Phase 12 fixes the toggle-flicker bug: previously, after the admin
+ *     clicked a toggle (Weapons / Leaderboard columns / booleans), the
+ *     local UI snapped briefly back to the old value because the next 250 ms
+ *     re-render read the *pre-update* settings from the snapshot before the
+ *     server's broadcast caught up. The fix is "optimistic-with-confirmation":
+ *     each toggleable field stores a pending value locally; the local value
+ *     is rendered until the next server snapshot reports the same value
+ *     (i.e. the change has been confirmed), at which point the override
+ *     clears. This eliminates the flicker without inventing a custom RTT
+ *     timer (the engine commits the new value FIRST in admin_set; see
+ *     engine.py for the matching backend guarantee).
  *
- *     Fix:
- *       1. All numeric / text inputs are wrapped in memoised
- *          `<NumSetting>` / `<TextSetting>` components that hold their own
- *          local state and only sync from the server when the user is *not*
- *          currently focused.
- *       2. Server commits happen on blur or Enter, never on every keystroke.
- *       3. The roster (which legitimately needs the high-frequency tick) is
- *          isolated; the settings column re-renders with the same parent tick
- *          but its inputs no longer re-bind their DOM `value`.
+ *     Phase 12 also:
+ *       - removes the Server Stress Test panel entirely,
+ *       - adds the `bot_max_attack_limit` slider (focus-fire cap),
+ *       - applies Tailwind responsive prefixes (flex-col / md:flex-row …)
+ *         so the dashboard works on mobile-width admin sessions.
  *
- *     Phase 10 also adds a six-entry Weapon Checklist that toggles
- *     `allowed_weapons` on the server. The backend reassigns any alive
- *     player whose current weapon was just disabled.
+ * zh-TW: AdminPanel — Phase 10 → Phase 12。
+ *     Phase 10 解決了輸入卡頓（memoised <NumSetting> / <TextSetting>）。
+ *     Phase 12 解決切換 toggle 時短暫閃回舊值的 bug：以往管理員按下 toggle
+ *     後，下一個 250 ms re-render 會先讀到伺服器尚未更新的 snapshot，UI 會
+ *     瞬間閃回舊值。改採「樂觀更新 + 伺服器確認後清除」：每個可切換欄位
+ *     都先寫入本地 pending 值並照本地值渲染，直到 snapshot 回報的值與
+ *     pending 一致（即伺服器已經確認），才把 override 清掉，等於消除了
+ *     閃爍。後端 engine.admin_set 會先 setattr 永久 persist，再執行 side
+ *     effects，前後端共同保證了這個流程。
  *
- * zh-TW: AdminPanel — Phase 10 改寫。
- *     生產環境的輸入卡頓來自於：250 ms tick 會把 20 Hz WebSocket 廣播的
- *     state 重新讀進來。每打一個字，就會被 re-render 拉回去伺服器最後一次
- *     廣播的值，導致打字嚴重 lag。
- *
- *     修法：
- *       1. 所有數字 / 文字輸入都包進 memoised 的 `<NumSetting>` /
- *          `<TextSetting>` 內，元件自己維護 local state，
- *          使用者沒 focus 時才從伺服器同步。
- *       2. 失焦或按 Enter 時才 commit 到伺服器，不會每打一個字就送一次。
- *       3. 玩家名單需要高頻 tick 才正確，故獨立處理；設定欄即便仍隨父層
- *          re-render，輸入框的 DOM `value` 也不會被重新 bind。
- *
- *     Phase 10 還新增了「武器啟用清單」，切換時即時送 admin_set
- *     `allowed_weapons` 到伺服器，後端會強制重派所有持已禁武器的存活玩家。
+ *     Phase 12 同時：
+ *       - 完整移除壓力測試面板，
+ *       - 新增 `bot_max_attack_limit`（集火上限）控制項，
+ *       - 套用 Tailwind 響應式前綴（flex-col / md:flex-row …），
+ *         讓管理員介面在手機寬度也能正常使用。
  */
 import { memo, useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n.jsx";
@@ -47,20 +47,18 @@ export default function AdminPanel({ stateRef, send, onClose }) {
   const [, setTick] = useState(0);
   const [filter, setFilter] = useState("all");
   const [hpAllInput, setHpAllInput] = useState("");
-  // EN: Phase 11 — stress test controls.
-  // zh-TW: Phase 11 — 壓力測試控制項。
-  const [stressBotCount, setStressBotCount] = useState("50");
-  const [stressDuration, setStressDuration] = useState("60");
 
-  // EN: Phase 11 — optimistic local state for allowed_weapons. Prevents
-  //     rapid toggle clicks from clobbering each other via the 250 ms
-  //     server tick race. We only sync from server after 500 ms of
-  //     no local changes.
-  // zh-TW: Phase 11 — allowed_weapons 的樂觀本地 state。防止快速連點
-  //     因 250 ms 伺服器 tick 競態而互相覆蓋。只有本地 500 ms 沒改動後
-  //     才從伺服器同步。
-  const [localWeapons, setLocalWeapons] = useState(null);
-  const localWeaponsTimerRef = useRef(null);
+  // EN: Phase 12 — pending overrides for any toggleable setting. Keyed by
+  //     setting name; the value is what we just sent to the server. The
+  //     override is cleared as soon as the server's snapshot reports the
+  //     same value (= the change has been confirmed end-to-end). This is
+  //     why the toggle no longer flickers: we never read a stale snapshot
+  //     between click and server-confirmation.
+  // zh-TW: Phase 12 — 各 toggle 欄位的 pending overrides。以欄位名為 key，
+  //     值是剛送給伺服器的內容；一旦下個 snapshot 回報相同值（end-to-end
+  //     確認），override 立刻清除。這就是 toggle 不再閃爍的關鍵：點擊到
+  //     伺服器確認之間，UI 都不會去讀仍未更新的 snapshot。
+  const [pending, setPending] = useState({});
 
   useEffect(() => {
     // EN: Roster + telemetry refresh. Inputs are insulated from this tick.
@@ -72,7 +70,45 @@ export default function AdminPanel({ stateRef, send, onClose }) {
   const snap = stateRef.current;
   const settings = snap?.settings ?? {};
   const players = snap?.players ?? [];
-  const sortKey = settings.leaderboard_sort_by || "kills";
+
+  // EN: Reconcile pending → server. Any pending key whose server value
+  //     already matches the local override is dropped from `pending` so
+  //     subsequent renders just use `settings`. Doing it inside an effect
+  //     keeps render pure — we never mutate state during render itself.
+  // zh-TW: 把 pending 與 server 對帳。若伺服器回報的值已等於本地 pending
+  //     值，立刻把該 key 從 pending 清掉，後續 render 直接讀 `settings`。
+  //     在 effect 裡做這件事可保持 render 純函式，不會在 render 中改 state。
+  useEffect(() => {
+    setPending((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(prev)) {
+        const serverVal = settings?.[key];
+        if (serverVal !== undefined && String(serverVal) === String(prev[key])) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [settings]);
+
+  // EN: Helper — read the live value of a toggleable setting, preferring
+  //     the local pending override (if any) over the snapshot.
+  // zh-TW: helper — 讀取 toggle 欄位的當前值，pending override 優先於 snapshot。
+  const liveSetting = (key, fallback) =>
+    pending[key] !== undefined ? pending[key] : settings[key] ?? fallback;
+
+  // EN: Helper — commit a setting both optimistically (local pending) and
+  //     to the server (admin_set). Used for every toggle in this panel.
+  // zh-TW: helper — 同時做樂觀本地更新與伺服器 commit（admin_set），
+  //     所有 toggle 都使用這個函式。
+  const commitSetting = (key, value) => {
+    setPending((prev) => ({ ...prev, [key]: value }));
+    send({ type: "admin_set", key, value });
+  };
+
+  const sortKey = liveSetting("leaderboard_sort_by", "kills");
   const sorted = [...players].sort((a, b) => (b[sortKey] ?? 0) - (a[sortKey] ?? 0));
   const timeRemaining = snap?.game_time_remaining ?? 0;
   const gameOver = snap?.game_over ?? false;
@@ -91,12 +127,16 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     bots: players.filter((p) => p.is_bot).length,
   };
 
-  const setKey = (key, value) => send({ type: "admin_set", key, value });
+  // EN: Phase 12 — every toggle/select/checkbox routes through commitSetting
+  //     so the optimistic-with-confirmation pipeline applies uniformly.
+  // zh-TW: Phase 12 — 所有 toggle / select / checkbox 都改走 commitSetting，
+  //     一致地套用「樂觀更新 + 伺服器確認後清除」流程。
+  const setKey = (key, value) => commitSetting(key, value);
 
   // ── Leaderboard column toggles ─────────────────────────────────────────
   const allCols = ["kills", "deaths", "damage_dealt", "damage_taken"];
   const colLabels = { kills: t.kills, deaths: t.deaths, damage_dealt: t.damageDealt, damage_taken: t.damageTaken };
-  const activeCols = (settings.leaderboard_columns || "kills,deaths,damage_dealt,damage_taken")
+  const activeCols = liveSetting("leaderboard_columns", "kills,deaths,damage_dealt,damage_taken")
     .split(",").map(s => s.trim()).filter(Boolean);
   const toggleCol = (col) => {
     let next;
@@ -106,16 +146,17 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     } else {
       next = [...activeCols, col];
     }
-    setKey("leaderboard_columns", next.join(","));
+    commitSetting("leaderboard_columns", next.join(","));
   };
 
-  // ── Weapon allow-list toggles (Phase 10, Phase 11 race-fix) ─────────────
-  // EN: Phase 11 — use localWeapons (optimistic) when available, otherwise
-  //     fall back to server state. This prevents rapid clicks from reading
-  //     stale server values between the 250 ms ticks.
-  // zh-TW: Phase 11 — 優先使用 localWeapons（樂觀值），否則退回伺服器
-  //     state。這避免了連點時讀到 250 ms tick 之間的舊伺服器值。
-  const activeWeapons = (localWeapons ?? settings.allowed_weapons ?? ALL_WEAPONS.join(","))
+  // ── Weapon allow-list toggles ─────────────────────────────────────────
+  // EN: Phase 12 — uses the same `pending` pipeline as all other toggles.
+  //     The override clears the moment the server's snapshot echoes our
+  //     CSV back, so the UI never flickers between click and confirm.
+  // zh-TW: Phase 12 — 改用與其他 toggle 一致的 `pending` 流程；
+  //     伺服器 snapshot 回報相同 CSV 後 override 立即清除，
+  //     UI 在點擊到伺服器確認之間不會閃爍。
+  const activeWeapons = liveSetting("allowed_weapons", ALL_WEAPONS.join(","))
     .split(",").map(s => s.trim()).filter(Boolean);
   const toggleWeapon = (w) => {
     const set = new Set(activeWeapons);
@@ -127,15 +168,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     } else {
       set.add(w);
     }
-    const csv = [...set].join(",");
-    // EN: Apply optimistically and send to server.
-    // zh-TW: 先樂觀套用再送伺服器。
-    setLocalWeapons(csv);
-    setKey("allowed_weapons", csv);
-    // EN: Clear the sync-back timer; restart 500 ms countdown.
-    // zh-TW: 清除同步計時器，重新啟動 500 ms 倒數。
-    if (localWeaponsTimerRef.current) clearTimeout(localWeaponsTimerRef.current);
-    localWeaponsTimerRef.current = setTimeout(() => setLocalWeapons(null), 500);
+    commitSetting("allowed_weapons", [...set].join(","));
   };
 
   return (
@@ -144,7 +177,11 @@ export default function AdminPanel({ stateRef, send, onClose }) {
       <div className="br-bg-glow br-bg-glow--crimson" aria-hidden />
       <div className="br-scanlines" aria-hidden />
 
-      <header className="br-admin-topbar">
+      {/* EN: Phase 12 — `flex-wrap` lets telemetry chips spill onto a new
+              row instead of overflowing on phones; `gap-2` keeps spacing.
+          zh-TW: Phase 12 — `flex-wrap` 讓遙測 chip 在手機寬度自動換行，
+              避免溢出；`gap-2` 維持基本間距。 */}
+      <header className="br-admin-topbar flex-wrap gap-2">
         <div className="br-admin-brand">
           <span className="br-status-led br-status-led--red" />
           <div className="br-admin-brand-text">
@@ -178,18 +215,27 @@ export default function AdminPanel({ stateRef, send, onClose }) {
         </div>
       </header>
 
-      <div className="br-admin-body">
+      {/* EN: Phase 12 RWD — `flex-col md:grid` flips the dashboard to a
+              vertical stack on phones and back to the 3-column grid on ≥768 px.
+              `gap-3 md:gap-4` keeps spacing comfortable on both ends.
+          zh-TW: Phase 12 RWD — `flex-col md:grid` 在手機寬度以垂直堆疊
+              呈現，≥768px 時才回到三欄 grid；spacing 在手機與桌面都舒適。 */}
+      <div className="br-admin-body flex flex-col md:grid gap-3 md:gap-4">
         {/* LEFT — Game Settings */}
-        <section className="br-glass br-admin-col">
+        <section className="br-glass br-admin-col w-full md:w-auto">
           <PanelHead title={t.gameSettings} />
 
           <div className="br-field">
             <label className="br-field-label">{t.teamMode}</label>
-            <Toggle checked={!!settings.team_mode} onChange={(v) => setKey("team_mode", v)} />
+            <Toggle checked={!!liveSetting("team_mode", false)} onChange={(v) => setKey("team_mode", v)} />
           </div>
 
           <div className="br-field">
             <label className="br-field-label">{t.sortLeaderboard}</label>
+            {/* EN: `value` reads through liveSetting so the dropdown does
+                    not flicker between click and server-confirmation.
+                zh-TW: `value` 透過 liveSetting 取值，避免點擊到伺服器確認
+                    之間下拉選單閃回舊值。 */}
             <select className="br-select" value={sortKey}
               onChange={(e) => setKey("leaderboard_sort_by", e.target.value)}>
               <option value="kills">{t.kills}</option>
@@ -244,7 +290,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
           <PanelHead title={t.botManagement} small />
           <div className="br-field">
             <label className="br-field-label">{t.botsEnabled}</label>
-            <Toggle checked={!!settings.bots_enabled} onChange={(v) => setKey("bots_enabled", v)} />
+            <Toggle checked={!!liveSetting("bots_enabled", false)} onChange={(v) => setKey("bots_enabled", v)} />
           </div>
           <NumSetting
             label={t.botCount}
@@ -268,6 +314,19 @@ export default function AdminPanel({ stateRef, send, onClose }) {
             min={0.1} step={0.1}
             onCommit={(v) => setKey("bot_atk_speed_max", v)}
           />
+          {/* EN: Phase 12 — admin-tunable focus-fire cap. 0 = unlimited.
+              zh-TW: Phase 12 — 集火上限（管理員可調），0 代表不限制。 */}
+          <NumSetting
+            label={t.botMaxAttackLimit}
+            serverValue={settings.bot_max_attack_limit}
+            fallback={2}
+            min={0} max={20} step={1}
+            integer
+            onCommit={(v) => setKey("bot_max_attack_limit", v)}
+          />
+          <p className="br-mute" style={{ fontSize: 11, margin: "-2px 0 8px", lineHeight: 1.5 }}>
+            {t.botMaxAttackLimitHint}
+          </p>
 
           <div className="br-divider" />
 
@@ -360,10 +419,13 @@ export default function AdminPanel({ stateRef, send, onClose }) {
         </section>
 
         {/* CENTER — Player Roster */}
-        <section className="br-glass br-admin-col br-admin-col--wide">
-          <div className="br-roster-head">
+        <section className="br-glass br-admin-col br-admin-col--wide w-full md:w-auto">
+          {/* EN: Phase 12 RWD — stack the roster header on phones so filter
+                  tabs do not crowd the title.
+              zh-TW: Phase 12 RWD — 手機寬度下標題與篩選 tab 改成上下排列。 */}
+          <div className="br-roster-head flex flex-col md:flex-row gap-2 md:gap-4">
             <PanelHead title={t.playerRoster} inline />
-            <div className="br-filter-tabs">
+            <div className="br-filter-tabs flex-wrap">
               {[
                 { id: "all",   label: `ALL ${counts.total}` },
                 { id: "alive", label: `ALIVE ${counts.alive}` },
@@ -411,7 +473,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                   <span className="br-td br-td--num br-mono br-mute">{p.deaths ?? 0}</span>
                   <span className="br-td br-td--num br-mono br-cyan">{Math.round(p.damage_dealt ?? 0)}</span>
                   <span className="br-td br-td--state"><StateBadge state={p.state} /></span>
-                  <span className="br-td br-td--act" style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="br-td br-td--act flex flex-wrap items-center gap-1 md:gap-2">
                     <button className="br-btn br-btn--xs"
                       onClick={() => send({ type: "admin_force_respawn", player_id: p.id })}
                       disabled={p.state === "alive"}
@@ -442,7 +504,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
         </section>
 
         {/* RIGHT — Director / Telemetry / Danger */}
-        <section className="br-admin-col br-admin-col--right">
+        <section className="br-admin-col br-admin-col--right w-full md:w-auto">
           <div className="br-glass br-director-cta">
             <div className="br-director-art" aria-hidden>
               <svg viewBox="0 0 80 80">
@@ -488,40 +550,11 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               }}>{t.endGameNow}</button>
           </div>
 
-          {/* EN: Phase 11 — Server Stress Test section.
-              zh-TW: Phase 11 — 伺服器壓力測試區塊。 */}
-          <div className="br-glass br-glass--danger br-danger-card">
-            <PanelHead title={t.stressTest} small />
-            <p className="br-mute" style={{ fontSize: 11, margin: "4px 0 8px", lineHeight: 1.5 }}>
-              {t.stressTestDesc}
-            </p>
-            <NumSetting
-              label={t.stressBotCount}
-              serverValue={parseInt(stressBotCount, 10)}
-              fallback={50}
-              min={1} max={100} step={1}
-              integer
-              onCommit={(v) => setStressBotCount(String(v))}
-            />
-            <NumSetting
-              label={t.stressDuration}
-              serverValue={parseInt(stressDuration, 10)}
-              fallback={60}
-              min={5} max={600} step={5}
-              integer
-              onCommit={(v) => setStressDuration(String(v))}
-            />
-            <button className="br-btn br-btn--danger"
-              onClick={() => {
-                const count = parseInt(stressBotCount, 10) || 50;
-                const dur = parseInt(stressDuration, 10) || 60;
-                if (window.confirm(`${t.startStressTest}? (${count} bots × ${dur}s)`)) {
-                  send({ type: "admin_stress_test", bot_count: count, duration_seconds: dur });
-                }
-              }}>
-              {t.startStressTest}
-            </button>
-          </div>
+          {/* EN: Phase 12 — Stress Test panel removed. The "Server Stress
+              Testing System" was deprecated alongside the backend code in
+              engine.py / main.py.
+              zh-TW: Phase 12 — 已完全移除壓力測試面板，後端 engine.py /
+              main.py 中對應的程式碼也一併刪除。 */}
         </section>
       </div>
     </div>

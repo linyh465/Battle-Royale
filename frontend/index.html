@@ -10,6 +10,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
+    <!-- EN: Phase 12 — Tailwind CDN runtime, used to apply responsive
+         utility prefixes (e.g. flex-col / md:flex-row) inside AdminPanel
+         for mobile RWD. The bespoke br-* design system still owns the
+         visual tokens; Tailwind is only consulted for layout helpers.
+         zh-TW: Phase 12 — 引入 Tailwind CDN runtime，用來啟用響應式
+         前綴（例如 flex-col / md:flex-row），讓 AdminPanel 在手機上正
+         確排版。原本的 br-* 設計系統仍主導視覺，Tailwind 只負責 layout
+         輔助 class。 -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
       html, body, #root { height: 100%; margin: 0; background: #03060d; color: #d8e6ff;
         font-family: "Inter", "SF Pro Text", system-ui, sans-serif; }

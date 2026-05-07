@@ -416,11 +416,21 @@
 .br-icon-btn:hover { background: rgba(255,59,92,0.22); }
 
 .br-admin-body {
-  flex: 1; display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 320px;
-  gap: 14px; min-height: 0; position: relative; z-index: 1;
+  flex: 1; min-height: 0; position: relative; z-index: 1;
 }
-@media (max-width: 1200px) {
+/* EN: Phase 12 — Tailwind utility prefixes on the JSX (`flex flex-col
+       md:grid …`) own the layout flow now; this base rule only sets the
+       desktop grid template that activates once md:grid kicks in.
+   zh-TW: Phase 12 — JSX 上的 Tailwind utility（`flex flex-col md:grid …`）
+       現在主導排版；此基礎規則只負責桌面寬度的 grid template，當
+       md:grid 生效時套用。 */
+@media (min-width: 768px) {
+  .br-admin-body {
+    grid-template-columns: 320px minmax(0, 1fr) 320px;
+    gap: 14px;
+  }
+}
+@media (max-width: 1200px) and (min-width: 768px) {
   .br-admin-body { grid-template-columns: 1fr; }
 }
 .br-admin-col {

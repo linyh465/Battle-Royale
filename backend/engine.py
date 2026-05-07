@@ -79,6 +79,12 @@ class GameSettings:
     # Standalone bot management
     bots_enabled: bool = False
     bot_count: int = 0
+    # EN: Phase 12 — global cap on how many bots may simultaneously target
+    #     the *same* human player. Prevents focus-fire pile-ons when many
+    #     bots are enabled. 0 disables the cap (no limit).
+    # zh-TW: Phase 12 — 全域限制：同一名玩家最多可被多少 Bot 同時鎖定。
+    #     避免 Bot 數量很多時多隻同時集火。設為 0 代表不限制。
+    bot_max_attack_limit: int = 2
     # EN: Phase 10 — comma-separated whitelist of weapon IDs the lobby + engine
     #     are allowed to hand out. Disabling an entry mid-match triggers a
     #     forced random reassign for all alive players holding it.
@@ -127,13 +133,6 @@ class GameEngine:
         self.game_over: bool = False
         self.reset_seq: int = 0
         self._standalone_bot_ids: Set[str] = set()
-
-        # EN: Phase 11 — stress test tracking. Stores IDs of bots spawned by
-        #     the admin stress test and a reference to the cleanup task.
-        # zh-TW: Phase 11 — 壓力測試追蹤。儲存由管理員壓測生成的 Bot ID
-        #     以及清理任務的參照。
-        self._stress_test_bot_ids: Set[str] = set()
-        self._stress_cleanup_task: asyncio.Task | None = None
 
         # EN: Wake-up event used by run() to sleep the simulation loop while
         #     idle (no players). Created lazily inside run() to bind to the
@@ -355,70 +354,16 @@ class GameEngine:
             p.respawn(x, y)
 
     def admin_kick_bots(self) -> None:
+        # EN: Phase 12 — stress-test scaffolding removed. Now we just walk every
+        #     bot owned by the engine and drop it (also flushing bullets owned
+        #     by the removed bots in the next sim tick when bullets recompute).
+        # zh-TW: Phase 12 — 已移除壓力測試相關代碼。本函式直接遍歷所有 Bot
+        #     並移除（其名下子彈會在下一個模擬 tick 自動清掉）。
         bot_ids = [pid for pid, p in list(self.players.items()) if p.is_bot]
         for pid in bot_ids:
             self.players.pop(pid, None)
             self.connections.pop(pid, None)
             self._standalone_bot_ids.discard(pid)
-            self._stress_test_bot_ids.discard(pid)
-
-    # ──────────── Stress testing / 壓力測試 ────────────
-    def stress_test_start(self, bot_count: int, duration_seconds: float) -> None:
-        """EN: Instantly spawn `bot_count` stress-test bots and schedule an
-           asyncio background task to auto-remove them after `duration_seconds`.
-           Capped at 100 bots to prevent OOM on limited Railway tiers.
-           zh-TW: 立即生成 `bot_count` 個壓測 Bot，並排程 asyncio 背景任務，
-           在 `duration_seconds` 秒後自動移除。上限 100 個以避免 Railway 低階方案 OOM。"""
-        # EN: Clamp inputs for safety.
-        # zh-TW: 限制輸入值以確保安全。
-        bot_count = max(1, min(100, int(bot_count)))
-        duration_seconds = max(5.0, min(600.0, float(duration_seconds)))
-
-        # EN: Cancel any existing stress-test cleanup task.
-        # zh-TW: 取消任何現有的壓測清理任務。
-        if self._stress_cleanup_task and not self._stress_cleanup_task.done():
-            self._stress_cleanup_task.cancel()
-
-        # EN: Spawn bots.
-        # zh-TW: 生成 Bot。
-        new_ids: Set[str] = set()
-        for _ in range(bot_count):
-            bot = self.add_bot()
-            bot.max_hp = self.settings.default_bot_hp
-            bot.hp = bot.max_hp
-            new_ids.add(bot.id)
-        self._stress_test_bot_ids |= new_ids
-
-        # EN: Spawn background cleanup task.
-        # zh-TW: 生成背景清理任務。
-        self._stress_cleanup_task = asyncio.create_task(
-            self._stress_test_cleanup(new_ids, duration_seconds)
-        )
-
-    async def _stress_test_cleanup(
-        self, bot_ids: Set[str], delay: float
-    ) -> None:
-        """EN: Background task — waits `delay` seconds then removes all
-           stress-test bots, freeing RAM/CPU. If the task is cancelled
-           (e.g. a new stress test starts), the bots from this batch
-           are cleaned up immediately.
-           zh-TW: 背景任務 — 等待 `delay` 秒後移除所有壓測 Bot，釋放 RAM/CPU。
-           若任務被取消（例如新的壓測啟動），此批次的 Bot 會立即清除。"""
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            # EN: Remove stress-test bots and their bullets.
-            # zh-TW: 移除壓測 Bot 及其子彈。
-            for pid in list(bot_ids):
-                self.players.pop(pid, None)
-                self.connections.pop(pid, None)
-                self._stress_test_bot_ids.discard(pid)
-            # EN: Eagerly purge bullets owned by removed bots (GC tightening).
-            # zh-TW: 立即清除已移除 Bot 的子彈（GC 強化）。
-            if self.bullets:
-                self.bullets = [b for b in self.bullets if b.owner_id not in bot_ids]
 
     def admin_set_game_timer(self, seconds: float) -> None:
         now = time.perf_counter()
@@ -476,6 +421,18 @@ class GameEngine:
             current.append(bot.id)
 
     def admin_set(self, key: str, value) -> None:
+        # EN: Phase 12 — admin payloads MUST permanently mutate the global
+        #     `GameSettings` instance so the next snapshot the broadcast loop
+        #     emits already carries the new value. Without this, the admin
+        #     panel briefly flickers back to the prior value while waiting
+        #     for the server to confirm. Type coercion is keyed off the
+        #     CURRENT field type to keep the schema stable, but the value is
+        #     committed via `setattr` *before* any side-effect helper runs.
+        # zh-TW: Phase 12 — 管理員指令必須永久更新全域 `GameSettings`，
+        #     確保下一個 broadcast tick 立刻帶上新值，否則管理員 UI 在
+        #     等待伺服器回覆時會短暫閃回舊值。型別會依目前欄位的型別做
+        #     強制轉換以保持 schema 穩定，但 setattr 一定在所有 side-effect
+        #     helper 之前執行。
         if not key or not hasattr(self.settings, key):
             return
         cur = getattr(self.settings, key)
@@ -488,9 +445,13 @@ class GameEngine:
                 value = float(value)
             else:
                 value = str(value)
-            setattr(self.settings, key, value)
         except (TypeError, ValueError):
             return
+        # EN: Persist FIRST, then run any sync helpers. Persistence cannot be
+        #     short-circuited by a helper failure.
+        # zh-TW: 先 persist，再跑同步 helper；helper 失敗也不能影響欄位
+        #     已經寫入的事實。
+        setattr(self.settings, key, value)
         if key == "team_mode":
             self._sync_team_mode()
         elif key in ("bots_enabled", "bot_count"):
@@ -541,6 +502,13 @@ class GameEngine:
             return
 
         all_players = list(self.players.values())
+        # EN: Phase 12 — pass the admin-tunable focus-fire cap through to
+        #     each BotPlayer.ai_step. Hard-coded "max 2 bots per player"
+        #     is gone; the limit is now `settings.bot_max_attack_limit`.
+        # zh-TW: Phase 12 — 把管理員可調的集火上限傳給每個 Bot 的
+        #     ai_step。原本寫死「每位玩家最多 2 隻 Bot 鎖定」已改用
+        #     `settings.bot_max_attack_limit`。
+        max_focus = max(0, int(self.settings.bot_max_attack_limit or 0))
         for p in all_players:
             if isinstance(p, BotPlayer):
                 if p.state == STATE_DEAD and now >= p.respawn_at:
@@ -548,7 +516,15 @@ class GameEngine:
                     p.max_hp = self.settings.default_bot_hp
                     p.respawn(x, y)
                 else:
-                    p.ai_step(all_players, self.world_w, self.world_h, now, self.settings.bot_atk_speed_min, self.settings.bot_atk_speed_max)
+                    p.ai_step(
+                        all_players,
+                        self.world_w,
+                        self.world_h,
+                        now,
+                        self.settings.bot_atk_speed_min,
+                        self.settings.bot_atk_speed_max,
+                        max_focus,
+                    )
 
         for p in self.players.values():
             p.update(dt)
@@ -717,6 +693,9 @@ class GameEngine:
                 "default_player_hp": self.settings.default_player_hp,
                 "default_bot_hp": self.settings.default_bot_hp,
                 "allowed_weapons": self.settings.allowed_weapons,
+                # EN: Phase 12 — focus-fire cap (0 = unlimited).
+                # zh-TW: Phase 12 — 集火上限（0 = 不限制）。
+                "bot_max_attack_limit": self.settings.bot_max_attack_limit,
             },
             "go": self.game_over,
             "tr": time_remaining,

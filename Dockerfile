@@ -46,11 +46,18 @@ COPY docs/ /build/docs/
 #     code paths (e.g. ../backend/engine.py) that are useful as IDE / GitHub
 #     deep-links but don't resolve as MkDocs internal links — those are
 #     expected warnings, not actual broken-doc problems.
+#     Phase 12 — verify the index.html is present after build; if missing,
+#     fail the docker build LOUDLY rather than letting /docs silently 404
+#     in production.
 # zh-TW: 強制指定輸出目錄，確保下一個 stage 能正確複製。
 #     刻意不加 --strict — 部分文件刻意保留指向原始碼的相對路徑
 #     （例：../backend/engine.py），方便在 IDE 或 GitHub 上點擊跳轉，
 #     在 MkDocs 內會被警告但屬預期行為，並非真的壞連結。
-RUN mkdocs build --site-dir /build/site
+#     Phase 12 — build 完成後檢查 index.html 是否存在；若漏 build 立刻
+#     讓 docker build 失敗，避免上線後 /docs 安靜回 404。
+RUN mkdocs build --site-dir /build/site \
+    && test -f /build/site/index.html \
+    && echo "[docs-build] OK — site/index.html present"
 
 
 # ─── Stage 3: Python runtime (FastAPI + Uvicorn) ─────────────────────────────

@@ -26,12 +26,32 @@ class BotPlayer(Player):
         if not self.name or self.name == "player":
             self.name = f"BOT-{random.randint(100, 999)}"
 
-    def ai_step(self, players, world_w: float, world_h: float, now: float, atk_min: float = 0.2, atk_max: float = 1.0) -> None:
+    def ai_step(
+        self,
+        players,
+        world_w: float,
+        world_h: float,
+        now: float,
+        atk_min: float = 0.2,
+        atk_max: float = 1.0,
+        max_focus: int = 2,
+    ) -> None:
+        # EN: Phase 12 — `max_focus` is the admin-tunable cap on how many
+        #     bots may focus-fire the same player at once. The previous
+        #     hard-coded value of 2 is now passed in by the engine from
+        #     `GameSettings.bot_max_attack_limit`. A value of 0 disables
+        #     the cap entirely (bots will swarm whoever is closest).
+        # zh-TW: Phase 12 — `max_focus` 是管理員可調的集火上限：
+        #     同一名玩家最多可被多少隻 Bot 同時鎖定。原本寫死的 2
+        #     已改由 engine 從 `GameSettings.bot_max_attack_limit` 傳入；
+        #     傳 0 代表不限制（所有 Bot 都會圍攻最近的玩家）。
         if self.state != STATE_ALIVE:
             return
 
-        # EN: find the closest valid target — alive, not me, not same team.
-        # zh-TW: 尋找最近的有效目標 — 仍存活、非自己、不同隊伍。
+        # EN: find the closest valid target — alive, not me, not same team,
+        #     and not already saturated with bot attention.
+        # zh-TW: 尋找最近的有效目標 — 仍存活、非自己、不同隊伍，
+        #     且尚未被太多 Bot 集火。
         target = None
         best = float("inf")
         cx = self.x + self.w / 2
@@ -43,14 +63,20 @@ class BotPlayer(Player):
                 continue
             if self.team and o.team and o.team == self.team:
                 continue
-            
-            # Limit max 2 bots per player
-            targeting_count = sum(
-                1 for p in players 
-                if getattr(p, "is_bot", False) and p.state == STATE_ALIVE and getattr(p, "target_id", "") == o.id and p.id != self.id
-            )
-            if targeting_count >= 2:
-                continue
+
+            # EN: Honour the global focus-fire cap. `max_focus <= 0` means
+            #     unlimited (skip the check entirely).
+            # zh-TW: 遵守集火上限；`max_focus <= 0` 代表不設限（直接跳過）。
+            if max_focus > 0:
+                targeting_count = sum(
+                    1 for p in players
+                    if getattr(p, "is_bot", False)
+                    and p.state == STATE_ALIVE
+                    and getattr(p, "target_id", "") == o.id
+                    and p.id != self.id
+                )
+                if targeting_count >= max_focus:
+                    continue
 
             ox = o.x + o.w / 2
             oy = o.y + o.h / 2
