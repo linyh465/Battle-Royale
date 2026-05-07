@@ -41,6 +41,40 @@
   --br-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 }
 
+/* ==========================================================================
+   Phase 13 — Mobile UX: disable text selection & browser gestures globally
+   --------------------------------------------------------------------------
+   EN:  Long-press / swipe on mobile triggers iOS callouts, the blue tap
+        highlight, and the native text-selection tool, all of which break
+        joystick + fire-button input mid-fight. Disable them at the root
+        and on every game UI container, then re-enable selection inside
+        actual text inputs so players can still type a name.
+   zh-TW: 行動裝置長按或滑動會喚出 iOS callout、藍色點擊高亮與文字選取
+        工具，於激戰中會直接卡住搖桿與射擊鍵。在最外層與所有遊戲 UI 容
+        器全面停用，再於文字輸入框內重新允許選取，讓玩家仍可輸入暱稱。
+   ========================================================================== */
+html, body, #root,
+.br-root, .br-lobby, .br-admin, .br-death,
+.br-mobile-overlay, canvas {
+  -webkit-touch-callout: none;        /* iOS Safari long-press callout */
+  -webkit-user-select: none;          /* Safari */
+  -khtml-user-select: none;           /* Konqueror */
+  -moz-user-select: none;             /* Firefox legacy */
+  -ms-user-select: none;              /* IE/Edge legacy */
+  user-select: none;                  /* Standard */
+  -webkit-tap-highlight-color: transparent; /* Remove blue mobile tap flash */
+}
+
+/* EN: Inputs/textareas need real selection so users can edit names & numbers.
+   zh-TW: 輸入欄位需保留選取能力，讓玩家可正常編輯暱稱與數值。 */
+.br-input,
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
 /* — Reset / base ——————————————————————————————————————————— */
 .br-root, .br-root *,
 .br-lobby, .br-lobby *,
