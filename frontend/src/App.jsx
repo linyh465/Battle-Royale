@@ -20,6 +20,7 @@ import DirectorCanvas from "./components/DirectorCanvas.jsx";
 import AdminPanel from "./components/AdminPanel.jsx";
 import PortraitLock from "./components/PortraitLock.jsx";
 import useGameSocket from "./hooks/useGameSocket.js";
+import expandSnapshot from "./hooks/expandSnapshot.js";
 
 const WS_URL = (() => {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -114,7 +115,9 @@ function Lobby({ wsUrl }) {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === "state") {
-        adminStateRef.current = msg;
+        // EN: Expand Phase 9 short-key wire format before exposing to AdminPanel.
+        // zh-TW: 將 Phase 9 短鍵格式展開後再交給 AdminPanel 使用。
+        adminStateRef.current = expandSnapshot(msg);
       } else if (msg.type === "welcome") {
         // EN: After welcome, immediately authenticate as admin.
         // zh-TW: 收到 welcome 後立即進行管理員驗證。

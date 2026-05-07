@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from engine import GameEngine
 
@@ -28,7 +32,7 @@ def detect_lan_ip() -> str:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     loop_task = asyncio.create_task(engine.run())
     try:
         yield
@@ -274,3 +278,59 @@ async def ws_endpoint(ws: WebSocket):
         pass
     finally:
         engine.remove_player(player.id)
+
+
+# ─── Static SPA mount (Phase 9 — single-container deploy) ───
+# EN: When a built frontend bundle exists (e.g., `frontend/dist` produced by
+#     Vite during the Docker build) we serve it from the same Uvicorn process.
+#     This lets Railway run a single container — no separate static host.
+#     Resolution order:
+#       1. $FRONTEND_DIST_DIR override (absolute path).
+#       2. ../frontend/dist relative to this file (production layout).
+#       3. /app/frontend/dist (Docker layout where backend lives at /app/backend).
+#     If none exist (pure dev mode) we silently skip the mount and let Vite
+#     serve the frontend on :5173.
+# zh-TW: 若已存在前端 build 輸出（例如 Docker build 階段由 Vite 產生的
+#     `frontend/dist`），同一個 Uvicorn 行程直接靜態托管，這樣 Railway 只需要
+#     跑一個容器，省下另一個靜態 host 的成本。
+#     解析順序：
+#       1. $FRONTEND_DIST_DIR 環境變數（絕對路徑）。
+#       2. 與本檔同層的 ../frontend/dist（一般生產佈局）。
+#       3. /app/frontend/dist（Docker 佈局，後端在 /app/backend）。
+#     若都不存在（純 dev 模式）則靜默跳過，由 Vite 在 :5173 服務前端。
+def _resolve_frontend_dist() -> Path | None:
+    candidates: list[Path] = []
+    env_path = os.environ.get("FRONTEND_DIST_DIR")
+    if env_path:
+        candidates.append(Path(env_path))
+    here = Path(__file__).resolve().parent
+    candidates.append(here.parent / "frontend" / "dist")
+    candidates.append(Path("/app/frontend/dist"))
+    for p in candidates:
+        if p.is_dir() and (p / "index.html").is_file():
+            return p
+    return None
+
+
+_dist = _resolve_frontend_dist()
+if _dist is not None:
+    # EN: Mount /assets first so hashed JS/CSS resolve correctly.
+    # zh-TW: 先掛載 /assets，讓 Vite 產生的雜湊資源能正確命中。
+    assets_dir = _dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    # EN: Static files at the dist root (favicon, robots.txt, etc.).
+    # zh-TW: dist 根目錄下的靜態資源（favicon、robots.txt 等）。
+    @app.get("/{filename:path}", include_in_schema=False)
+    async def spa_fallback(filename: str):
+        # EN: Skip API/WS-style paths so they don't collide with this catch-all.
+        # zh-TW: 跳過 API / WS 類路徑，避免與 catch-all 衝突。
+        if filename.startswith(("api/", "ws", "health")):
+            raise HTTPException(status_code=404)
+        candidate = _dist / filename
+        if filename and candidate.is_file():
+            return FileResponse(candidate)
+        # EN: SPA history fallback — return index.html for any unknown route.
+        # zh-TW: SPA 歷史路由 fallback — 任何未知路徑都回 index.html。
+        return FileResponse(_dist / "index.html")

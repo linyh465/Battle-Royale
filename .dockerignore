@@ -1,0 +1,46 @@
+# EN: Files that bloat the build context or leak local state. Keep this list
+#     in sync with .gitignore wherever it makes sense — anything here is
+#     skipped before the Docker daemon ever sees it.
+# zh-TW: 容易讓 build context 變大、或會洩漏本機狀態的檔案。
+#         儘量與 .gitignore 同步 — 列在這裡的東西不會被 Docker daemon 讀到。
+
+# ── Version control / VCS ──────────────────────────────────────────────────
+.git
+.gitignore
+.github
+
+# ── Python caches / artefacts ──────────────────────────────────────────────
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/venv
+
+# ── Frontend build/runtime caches ──────────────────────────────────────────
+**/node_modules
+**/dist
+**/.vite
+**/.parcel-cache
+**/.cache
+
+# ── IDE / OS files ─────────────────────────────────────────────────────────
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# ── Local secrets / env ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Docs builds + design notes (kept in repo, but not needed at runtime) ───
+site
+docs/.cache
+
+# ── Misc ───────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -20,7 +20,20 @@ from models import (
     STATE_SPECTATING,
 )
 
-TICK_RATE = 30
+# EN: TICK_RATE is configurable via env (TICK_RATE_HZ). Default 20 Hz to keep
+#     bandwidth low on Railway's Hobby tier — frontend Canvas interpolation
+#     covers smoothness between snapshots.
+# zh-TW: 透過環境變數 TICK_RATE_HZ 調整 tick 頻率，預設 20 Hz 以節省頻寬。
+#     前端 Canvas 內插平滑可彌補較低的 tick 頻率。
+def _read_tick_rate() -> int:
+    try:
+        v = int(os.environ.get("TICK_RATE_HZ", "20"))
+        return max(5, min(60, v))
+    except (TypeError, ValueError):
+        return 20
+
+
+TICK_RATE = _read_tick_rate()
 TICK_DT = 1.0 / TICK_RATE
 WORLD_W = 2560
 WORLD_H = 1440
@@ -57,10 +70,13 @@ class GameSettings:
 
 
 class GameEngine:
-    """EN: Authoritative server-side simulation, 30 Hz tick.
-       Continuous Deathmatch — no shrinking zone.
-       zh-TW: 伺服器端權威模擬，30 Hz tick。
-       持續餘燼模式 — 無縮圈。"""
+    """EN: Authoritative server-side simulation. Tick rate configurable via
+       TICK_RATE_HZ (default 20). Continuous Deathmatch — no shrinking zone.
+       When no players are connected the loop sleeps on an asyncio.Event,
+       consuming zero CPU until someone joins (Phase 9 idle-pause).
+       zh-TW: 伺服器端權威模擬，tick 頻率可由 TICK_RATE_HZ 環境變數設定（預設 20）。
+       持續餘燼模式 — 無縮圈。當沒有玩家連線時，loop 會 await 一個 asyncio.Event，
+       在 CPU 上完全閒置，直到有人加入才喚醒（Phase 9 閒置暫停）。"""
 
     def __init__(self, world_w: int = WORLD_W, world_h: int = WORLD_H) -> None:
         self.world_w = world_w
@@ -75,26 +91,26 @@ class GameEngine:
         self.directors: List["WebSocketLike"] = []
 
         # EN: Non-combatant admin WebSocket connections.
-        #     Admins do NOT have a Player object — they cannot be killed
-        #     and have no map coordinates.  They receive the global game
-        #     state and can send administrative payloads.
         # zh-TW: 非戰鬥管理員 WebSocket 連線。
-        #     管理員沒有 Player 物件 — 無法被擊殺，也沒有地圖座標。
-        #     管理員接收全域遊戲狀態並可送出管理指令。
         self.admin_ws: Dict[str, "WebSocketLike"] = {}
         # EN: Legacy set kept for backward-compat checks elsewhere.
         # zh-TW: 舊版集合，保留供其他模組向後相容使用。
         self.admin_conns: Set[str] = set()
 
         self.settings = GameSettings()
-        # EN: Poison zone removed — continuous open arena.
-        # zh-TW: 毒圈已移除 — 持續開放競技場。
         self._running = False
         self._tick = 0
         self.game_end_time: float = 0.0
         self.game_over: bool = False
         self.reset_seq: int = 0
         self._standalone_bot_ids: Set[str] = set()
+
+        # EN: Wake-up event used by run() to sleep the simulation loop while
+        #     idle (no players). Created lazily inside run() to bind to the
+        #     correct asyncio loop.
+        # zh-TW: run() 使用的喚醒事件 — 沒有玩家時讓模擬 loop 休眠。
+        #     在 run() 內延遲建立以綁定正確的 asyncio loop。
+        self._wake: asyncio.Event | None = None
 
     # ──────────── Spawning / 生成 ────────────
     def _spawn_position(self) -> tuple[float, float]:
@@ -105,9 +121,17 @@ class GameEngine:
             random.uniform(60, self.world_h - 60),
         )
 
+    def _wake_loop(self) -> None:
+        # EN: Signal the run() loop to resume from idle sleep.
+        # zh-TW: 通知 run() loop 從閒置睡眠中恢復。
+        if self._wake is not None and not self._wake.is_set():
+            self._wake.set()
+
     def add_player(self, name: str, ws) -> Player:
         # EN: Creates a new combatant Player and registers the WS connection.
+        #     Wakes the simulation loop if it was idle.
         # zh-TW: 建立新的戰鬥玩家並註冊其 WebSocket 連線。
+        #     若 loop 處於閒置睡眠，則同時喚醒它。
         x, y = self._spawn_position()
         p = Player(name=name or "anon", x=x, y=y)
         p.max_hp = self.settings.default_player_hp
@@ -116,6 +140,7 @@ class GameEngine:
             p.team = self._next_team_assignment()
         self.players[p.id] = p
         self.connections[p.id] = ws
+        self._wake_loop()
         if self.settings.team_mode:
             self._balance_with_bots()
         return p
@@ -126,14 +151,21 @@ class GameEngine:
         bot.max_hp = self.settings.default_bot_hp
         bot.hp = bot.max_hp
         self.players[bot.id] = bot
+        self._wake_loop()
         return bot
 
     def remove_player(self, pid: str) -> None:
-        # EN: Remove a combatant player and their connection.
-        # zh-TW: 移除戰鬥玩家及其連線。
+        # EN: Remove a combatant player and their connection. Eagerly drop
+        #     bullets owned by this player so RAM is freed immediately
+        #     (Phase 9 GC tightening).
+        # zh-TW: 移除戰鬥玩家及其連線。同時立即清除其名下子彈，
+        #     讓 RAM 即時釋放（Phase 9 GC 強化）。
         self.players.pop(pid, None)
         self.connections.pop(pid, None)
         self.admin_conns.discard(pid)
+        self._standalone_bot_ids.discard(pid)
+        if self.bullets:
+            self.bullets = [b for b in self.bullets if b.owner_id != pid]
         if self.settings.team_mode:
             self._balance_with_bots()
 
@@ -162,8 +194,6 @@ class GameEngine:
 
     # ──────────── Respawn / spectate / 重生 / 觀戰 ────────────
     def request_respawn(self, pid: str) -> None:
-        # EN: Player-initiated respawn — blocked until respawn_at has passed.
-        # zh-TW: 玩家主動重生 — 必須等到 respawn_at 後才能執行。
         p = self.players.get(pid)
         if not p or p.state == STATE_ALIVE:
             return
@@ -182,8 +212,6 @@ class GameEngine:
 
     # ──────────── Admin controls / 管理員控制 ────────────
     def admin_force_respawn(self, target_pid: str) -> None:
-        # EN: Force-respawn a specific player, bypassing the penalty timer.
-        # zh-TW: 強制重生指定玩家，跳過懲罰計時器。
         p = self.players.get(target_pid)
         if not p:
             return
@@ -192,8 +220,6 @@ class GameEngine:
         p.respawn(x, y)
 
     def admin_force_respawn_all(self) -> None:
-        # EN: Force-respawn every dead / spectating player immediately.
-        # zh-TW: 立即強制重生所有已陣亡 / 觀戰中的玩家。
         for p in self.players.values():
             if p.state in (STATE_DEAD, STATE_SPECTATING):
                 x, y = self._spawn_position()
@@ -201,26 +227,18 @@ class GameEngine:
                 p.respawn(x, y)
 
     def admin_batch_reduce_respawn(self, seconds: float) -> None:
-        # EN: Reduce every dead player's remaining respawn timer by *seconds*.
-        #     If the timer drops below now, it becomes immediately respawnable.
-        # zh-TW: 將所有已陣亡玩家的剩餘重生計時器減少 *seconds* 秒。
-        #     若計時器低於當前時間，則可立即重生。
         now = time.perf_counter()
         for p in self.players.values():
             if p.state in (STATE_DEAD, STATE_SPECTATING) and p.respawn_at > now:
                 p.respawn_at = max(now, p.respawn_at - seconds)
 
     def admin_batch_reset_respawn(self) -> None:
-        # EN: Reset every dead player's respawn timer to *now* (instant respawn).
-        # zh-TW: 將所有已陣亡玩家的重生計時器歸零（可立即重生）。
         now = time.perf_counter()
         for p in self.players.values():
             if p.state in (STATE_DEAD, STATE_SPECTATING):
                 p.respawn_at = now
 
     def admin_force_kill(self, target_pid: str) -> None:
-        # EN: Admin force-kill a specific alive player.
-        # zh-TW: 管理員強制擊殺指定的存活玩家。
         p = self.players.get(target_pid)
         if not p or p.state != STATE_ALIVE:
             return
@@ -228,8 +246,6 @@ class GameEngine:
         self._kill(p, None, now)
 
     def admin_reset_match(self) -> None:
-        # EN: Reset all player stats and respawn everyone.
-        # zh-TW: 重置所有玩家統計並全部重生。
         self.reset_seq += 1
         self.game_over = False
         if self.settings.game_duration > 0:
@@ -248,16 +264,13 @@ class GameEngine:
             p.respawn(x, y)
 
     def admin_kick_bots(self) -> None:
-        # EN: Remove all bot players from the match.
-        # zh-TW: 將所有 Bot 踢出比賽。
         bot_ids = [pid for pid, p in list(self.players.items()) if p.is_bot]
         for pid in bot_ids:
             self.players.pop(pid, None)
             self.connections.pop(pid, None)
+            self._standalone_bot_ids.discard(pid)
 
     def admin_set_game_timer(self, seconds: float) -> None:
-        # EN: Set a new game countdown timer. 0 = disable.
-        # zh-TW: 設定新的遊戲倒數計時器。0 = 停用。
         now = time.perf_counter()
         if seconds <= 0:
             self.settings.game_duration = 0.0
@@ -269,8 +282,6 @@ class GameEngine:
             self.game_over = False
 
     def admin_adjust_game_timer(self, delta: float) -> None:
-        # EN: Extend (+) or shorten (-) the remaining game time.
-        # zh-TW: 延長（+）或縮短（-）剩餘遊戲時間。
         if self.settings.game_duration <= 0 or self.game_end_time <= 0:
             return
         now = time.perf_counter()
@@ -281,8 +292,6 @@ class GameEngine:
         self.game_end_time = 0.0
 
     def admin_set_all_hp(self, hp: float, target: str = "all") -> None:
-        # EN: Bulk-set max HP for all players / all bots / everyone.
-        # zh-TW: 批次設定所有玩家 / 所有 Bot / 全體的最大 HP。
         for p in self.players.values():
             if target == "players" and p.is_bot:
                 continue
@@ -292,8 +301,6 @@ class GameEngine:
             p.hp = hp
 
     def admin_set_player_hp(self, pid: str, hp: float) -> None:
-        # EN: Set max HP and current HP for a single player.
-        # zh-TW: 設定單一玩家的最大與當前 HP。
         p = self.players.get(pid)
         if not p:
             return
@@ -301,8 +308,6 @@ class GameEngine:
         p.hp = hp
 
     def _sync_standalone_bots(self) -> None:
-        # EN: Add / remove standalone bots to match the configured bot_count.
-        # zh-TW: 新增或移除獨立 Bot，使其數量符合設定的 bot_count。
         target = self.settings.bot_count if self.settings.bots_enabled else 0
         current = [pid for pid in list(self._standalone_bot_ids) if pid in self.players]
         self._standalone_bot_ids = set(current)
@@ -321,8 +326,6 @@ class GameEngine:
             current.append(bot.id)
 
     def admin_set(self, key: str, value) -> None:
-        # EN: Generic admin setter for GameSettings fields.
-        # zh-TW: 泛用管理員設定器，修改 GameSettings 欄位。
         if not key or not hasattr(self.settings, key):
             return
         cur = getattr(self.settings, key)
@@ -350,8 +353,6 @@ class GameEngine:
                     p.team = self._next_team_assignment()
             self._balance_with_bots()
         else:
-            # EN: tear down teams + remove every bot.
-            # zh-TW: 解散隊伍並移除全部 bot。
             for pid, p in list(self.players.items()):
                 if p.is_bot:
                     self.players.pop(pid, None)
@@ -364,8 +365,6 @@ class GameEngine:
         return "red" if red <= blue else "blue"
 
     def _balance_with_bots(self) -> None:
-        # EN: keep red/blue head-counts equal by adding bots to the underdog.
-        # zh-TW: 以 Bot 補滿少的那一隊，保持紅藍人數相等。
         red = sum(1 for p in self.players.values() if p.team == "red")
         blue = sum(1 for p in self.players.values() if p.team == "blue")
         while red < blue:
@@ -377,8 +376,6 @@ class GameEngine:
     def step(self, dt: float, now: float) -> None:
         self._tick += 1
 
-        # EN: Check game timer expiry.
-        # zh-TW: 檢查遊戲計時器是否到期。
         if (not self.game_over
                 and self.settings.game_duration > 0
                 and self.game_end_time > 0
@@ -412,8 +409,6 @@ class GameEngine:
                 b.alive = False
 
         self._resolve_bullet_hits(now)
-        # EN: Poison zone step removed — continuous deathmatch, no zone damage.
-        # zh-TW: 毒圈步驟已移除 — 持續餘燼模式，無圈外傷害。
         self.bullets = [b for b in self.bullets if b.alive]
 
     def _clamp_to_world(self, p: Player) -> None:
@@ -428,8 +423,6 @@ class GameEngine:
             for p in self.players.values():
                 if p.state != STATE_ALIVE or p.id == b.owner_id:
                     continue
-                # EN: friendly fire off in team mode.
-                # zh-TW: team mode 下不誤傷友軍。
                 if (self.settings.team_mode and owner and owner.team
                         and owner.team == p.team):
                     continue
@@ -442,17 +435,10 @@ class GameEngine:
                         self._kill(p, owner, now)
                     break
 
-    # EN: _update_safe_zone removed — no poison zone in Continuous Deathmatch.
-    # zh-TW: _update_safe_zone 已移除 — 持續餘燼模式無毒圈。
-
     def _kill(self, victim: Player, killer, now: float) -> None:
-        # EN: Mark victim as dead, apply respawn penalty.
-        # zh-TW: 將受害者標記為死亡，套用重生懲罰。
         victim.alive = False
         victim.state = STATE_DEAD
         victim.deaths += 1
-        # EN: penalty respawn formula — Wait = base + deaths * penalty.
-        # zh-TW: 重生懲罰公式 — 等待 = 基礎 + 死亡次數 × 懲罰。
         if victim.is_bot:
             wait = self.settings.bot_respawn_time
         else:
@@ -469,10 +455,77 @@ class GameEngine:
             victim.killed_by_name = ""
             victim.killed_by_weapon = ""
 
-    # ──────────── Networking / 網路通訊 ────────────
+    # ──────────── Networking — minified payload / 網路通訊 — 精簡封包 ────────────
+    # EN: Phase 9 wire format. We emit ultra-short keys to slash JSON size on
+    #     the broadcast hot-path (20 Hz × N players × N viewers). The frontend
+    #     `expandSnapshot()` helper reverses this mapping back into the
+    #     descriptive shape used by rendering code.
+    #     Per-player keys:
+    #       i = id, nm = name, x/y = pos, h = hp, mh = max_hp,
+    #       a = angle, k = kills, d = deaths,
+    #       dd = damage_dealt, dt = damage_taken, wp = weapon name,
+    #       s = state ('alive'|'dead'|'spectating'),
+    #       ra = respawn_at, b = is_bot (1/0), tm = team,
+    #       kn = killed_by_name, kw = killed_by_weapon, al = alive (1/0).
+    #     Per-bullet keys:
+    #       i = id, x/y = pos, o = owner_id, dm = damage, al = alive (1/0).
+    #     Top-level keys:
+    #       type='state', t = tick, n = now, wo = world{w,h}, st = settings,
+    #       go = game_over, tr = time_remaining, rs = reset_seq,
+    #       ps = players, bs = bullets.
+    #     Width/height are constant (player 28×28, bullet 6×6) and restored
+    #     client-side from `wo` / hard-coded constants — they never travel.
+    # zh-TW: Phase 9 廣播格式。改用極短鍵名以削減 JSON 大小（20 Hz × N 玩家 × N 觀眾）。
+    #     前端 `expandSnapshot()` 會把短鍵重新展開為渲染程式使用的長鍵格式。
+    #     玩家鍵對照：
+    #       i = id, nm = 名稱, x/y = 座標, h = hp, mh = 最大 hp,
+    #       a = 角度, k = 擊殺, d = 死亡,
+    #       dd = 輸出傷害, dt = 承受傷害, wp = 武器名稱,
+    #       s = 狀態（alive/dead/spectating）,
+    #       ra = 重生時間, b = 是否為 Bot（1/0）, tm = 隊伍,
+    #       kn = 擊殺者名稱, kw = 擊殺武器, al = 是否存活（1/0）。
+    #     子彈鍵對照：i, x, y, o = 擁有者 id, dm = 傷害, al = 存活旗標。
+    #     寬高為常數（玩家 28×28、子彈 6×6），不在線上傳輸，由前端還原。
+
+    @staticmethod
+    def _player_short(p: Player) -> dict:
+        return {
+            "i": p.id,
+            "nm": p.name,
+            "x": round(p.x, 2),
+            "y": round(p.y, 2),
+            "h": round(p.hp, 1),
+            "mh": p.max_hp,
+            "a": round(p.angle, 3),
+            "k": p.kills,
+            "d": p.deaths,
+            "dd": round(p.damage_dealt, 1),
+            "dt": round(p.damage_taken, 1),
+            "wp": p.weapon.name,
+            "s": p.state,
+            "ra": p.respawn_at,
+            "b": 1 if p.is_bot else 0,
+            "tm": p.team,
+            "kn": p.killed_by_name,
+            "kw": p.killed_by_weapon,
+            "al": 1 if p.alive else 0,
+        }
+
+    @staticmethod
+    def _bullet_short(b: Bullet) -> dict:
+        return {
+            "i": b.id,
+            "x": round(b.x, 2),
+            "y": round(b.y, 2),
+            "o": b.owner_id,
+            "dm": b.damage,
+            "al": 1 if b.alive else 0,
+        }
+
     def snapshot(self) -> dict:
         # EN: Build the authoritative state snapshot broadcast each tick.
-        # zh-TW: 建構每 tick 廣播的權威狀態快照。
+        #     Uses the Phase 9 minified key schema documented above.
+        # zh-TW: 建構每 tick 廣播的權威狀態快照，採用 Phase 9 短鍵格式（如上說明）。
         now = time.perf_counter()
         if self.settings.game_duration > 0 and self.game_end_time > 0 and not self.game_over:
             time_remaining = round(max(0.0, self.game_end_time - now), 1)
@@ -480,10 +533,10 @@ class GameEngine:
             time_remaining = 0.0
         return {
             "type": "state",
-            "tick": self._tick,
-            "now": now,
-            "world": {"w": self.world_w, "h": self.world_h},
-            "settings": {
+            "t": self._tick,
+            "n": now,
+            "wo": {"w": self.world_w, "h": self.world_h},
+            "st": {
                 "team_mode": self.settings.team_mode,
                 "leaderboard_sort_by": self.settings.leaderboard_sort_by,
                 "base_respawn_time": self.settings.base_respawn_time,
@@ -498,25 +551,23 @@ class GameEngine:
                 "default_player_hp": self.settings.default_player_hp,
                 "default_bot_hp": self.settings.default_bot_hp,
             },
-            "game_over": self.game_over,
-            "game_time_remaining": time_remaining,
-            "reset_seq": self.reset_seq,
-            "players": [p.to_dict() for p in self.players.values()],
-            "bullets": [b.to_dict() for b in self.bullets],
+            "go": self.game_over,
+            "tr": time_remaining,
+            "rs": self.reset_seq,
+            "ps": [self._player_short(p) for p in self.players.values()],
+            "bs": [self._bullet_short(b) for b in self.bullets],
         }
 
     async def broadcast(self) -> None:
         # EN: Send the snapshot to all player, admin, and director connections.
         # zh-TW: 將快照廣播給所有玩家、管理員與導播連線。
-        payload = json.dumps(self.snapshot())
+        payload = json.dumps(self.snapshot(), separators=(",", ":"))
         dead_pids: List[str] = []
         for pid, ws in self.connections.items():
             try:
                 await ws.send_text(payload)
             except Exception:
                 dead_pids.append(pid)
-        # EN: Broadcast to non-combatant admins.
-        # zh-TW: 廣播給非戰鬥管理員。
         dead_admins: List[str] = []
         for aid, ws in self.admin_ws.items():
             try:
@@ -538,9 +589,31 @@ class GameEngine:
             self.remove_admin(aid)
 
     async def run(self) -> None:
+        # EN: Main simulation loop. When `self.players` is empty we await the
+        #     wake event and consume zero CPU until a player joins
+        #     (Phase 9 idle-pause). Bullets are also flushed during idle so
+        #     no stale projectiles linger when a new match begins.
+        # zh-TW: 主模擬 loop。當沒有玩家時，await 喚醒事件，CPU 完全閒置，
+        #     直到有人加入才繼續（Phase 9 閒置暫停）。閒置時順手清空殘留子彈，
+        #     避免新局開始時還有舊子彈。
         self._running = True
+        if self._wake is None:
+            self._wake = asyncio.Event()
         last = time.perf_counter()
         while self._running:
+            if not self.players:
+                # EN: Idle — drop bullets and sleep until a player joins.
+                # zh-TW: 閒置 — 清空子彈並等待玩家加入。
+                if self.bullets:
+                    self.bullets = []
+                self._wake.clear()
+                try:
+                    await self._wake.wait()
+                except asyncio.CancelledError:
+                    raise
+                last = time.perf_counter()
+                continue
+
             now = time.perf_counter()
             dt = now - last
             last = now
@@ -551,6 +624,10 @@ class GameEngine:
 
     def stop(self) -> None:
         self._running = False
+        # EN: Wake any pending await on the idle event so run() can exit cleanly.
+        # zh-TW: 喚醒任何 await 中的閒置事件，讓 run() 能順利結束。
+        if self._wake is not None:
+            self._wake.set()
 
 
 class WebSocketLike:
