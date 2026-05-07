@@ -961,3 +961,327 @@ input, textarea, [contenteditable="true"] {
     radial-gradient(1000px 700px at 50% 50%, rgba(255,59,92,0.12), transparent 60%),
     linear-gradient(180deg, rgba(3,6,13,0.92) 0%, rgba(6,11,24,0.92) 100%);
 }
+
+/* ==========================================================================
+   PHASE 16 — INTERACTIVE DOCS SPA (.br-docs-*)
+   --------------------------------------------------------------------------
+   EN:  Standalone cyberpunk shell for the React SPA documentation page.
+        All Docs.jsx layout / animation tokens live here. The page injects
+        runtime keyframes (brDocsRise, brDocsScan, brDocsBlink, brDocsGlow)
+        via <style id="br-docs-keyframes"> on mount.
+   zh-TW: React SPA 文件頁的獨立賽博龐克外殼。Docs.jsx 所有版面 / 動畫
+        token 集中於此。頁面掛載時會以 <style id="br-docs-keyframes">
+        注入 runtime keyframes。
+   ========================================================================== */
+
+.br-docs-root {
+  position: relative;
+  min-height: 100vh;
+  color: var(--br-text);
+  font-family: var(--br-font);
+  background:
+    radial-gradient(1100px 700px at 30% -10%, rgba(34,211,238,0.10), transparent 55%),
+    radial-gradient(1000px 700px at 80% 110%, rgba(255,59,92,0.10), transparent 55%),
+    linear-gradient(180deg, var(--br-bg-0) 0%, var(--br-bg-1) 45%, var(--br-bg-2) 100%);
+  overflow: hidden;
+}
+
+/* Ambient grid layer */
+.br-docs-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(34,211,238,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34,211,238,0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(ellipse at center, #000 50%, transparent 95%);
+}
+
+/* EN: Animated CRT-style scanline that sweeps top → bottom every 6s.
+   zh-TW: CRT 風格動態掃描線，每 6 秒由上往下掃過。 */
+.br-docs-scan-wrap {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+}
+.br-docs-scan {
+  position: absolute; left: 0; right: 0; height: 12vh;
+  background: linear-gradient(transparent, rgba(34,211,238,0.07), transparent);
+  animation: brDocsScan 6s linear infinite;
+}
+
+/* EN: Repeating-line static noise overlay for that off-broadcast feel.
+   zh-TW: 重複線條的靜態雜訊 overlay，營造訊號中斷的氛圍。 */
+.br-docs-noise {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0 2px,
+    rgba(255,255,255,0.012) 2px 3px
+  );
+  mix-blend-mode: screen;
+}
+
+.br-docs-shell {
+  position: relative; z-index: 1;
+  max-width: 1180px; margin: 0 auto;
+  padding: 24px 22px 80px;
+}
+
+/* Top bar */
+.br-docs-topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 12px;
+  margin-bottom: 22px;
+}
+.br-docs-back {
+  color: var(--br-cyan);
+  text-decoration: none;
+  font-family: var(--br-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  border: 1px solid rgba(34,211,238,0.45);
+  padding: 6px 14px;
+  border-radius: 999px;
+  transition: all 160ms ease;
+}
+.br-docs-back:hover {
+  background: rgba(34,211,238,0.10);
+  box-shadow: 0 0 18px rgba(34,211,238,0.35);
+}
+
+/* Title — typewriter with glow */
+.br-docs-title {
+  font-family: var(--br-display);
+  font-weight: 800;
+  font-size: clamp(26px, 5vw, 44px);
+  letter-spacing: 0.16em;
+  color: #e6f7ff;
+  margin: 0 0 6px;
+  animation: brDocsGlow 2.6s ease-in-out infinite;
+}
+.br-docs-caret {
+  display: inline-block; width: 0.6ch;
+  color: var(--br-cyan);
+  margin-left: 2px;
+  animation: brDocsBlink 1s steps(1) infinite;
+}
+.br-docs-subtitle {
+  margin: 0 0 28px;
+  font-family: var(--br-mono);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--br-text-2);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+.br-docs-build {
+  color: var(--br-cyan-2);
+  border: 1px solid rgba(34,211,238,0.45);
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.18em;
+}
+.br-docs-sep { opacity: 0.5; }
+
+/* Body — sidebar + content */
+.br-docs-body {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+@media (max-width: 820px) {
+  .br-docs-body {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* Nav */
+.br-docs-nav {
+  display: flex; flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(10,18,38,0.6);
+  border: 1px solid var(--br-line);
+  border-radius: var(--br-radius);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  position: sticky; top: 18px;
+}
+@media (max-width: 820px) {
+  .br-docs-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    padding: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--br-line) transparent;
+  }
+}
+.br-docs-nav-btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--br-radius-s);
+  color: var(--br-text-2);
+  padding: 10px 12px;
+  font-family: var(--br-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-align: left;
+  transition: all 200ms ease;
+  white-space: nowrap;
+}
+.br-docs-nav-btn:hover {
+  color: var(--br-text);
+  background: rgba(34,211,238,0.06);
+  border-color: rgba(34,211,238,0.2);
+}
+.br-docs-nav-btn.is-active {
+  background: linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.04));
+  color: var(--br-cyan-2);
+  border-color: rgba(34,211,238,0.55);
+  box-shadow: inset 0 0 0 1px rgba(34,211,238,0.35), 0 0 18px rgba(34,211,238,0.18);
+}
+.br-docs-nav-icon {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 18px;
+  font-size: 14px;
+  color: var(--br-cyan);
+  text-shadow: 0 0 8px rgba(34,211,238,0.6);
+}
+.br-docs-nav-label { flex: 1; }
+
+/* Content */
+.br-docs-content {
+  display: flex; flex-direction: column; gap: 16px;
+  min-width: 0;
+}
+.br-docs-cat-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 4px 6px 12px;
+  border-bottom: 1px solid var(--br-line);
+  margin-bottom: 4px;
+}
+.br-docs-cat-icon {
+  font-size: 22px; color: var(--br-cyan);
+  text-shadow: 0 0 14px rgba(34,211,238,0.7);
+}
+.br-docs-cat-title {
+  margin: 0 0 2px;
+  font-family: var(--br-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.18em;
+  color: var(--br-text);
+}
+.br-docs-cat-tagline {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--br-text-2);
+}
+
+/* Card */
+.br-docs-card {
+  position: relative;
+  background: linear-gradient(180deg, rgba(15,26,51,0.78), rgba(8,14,28,0.66));
+  border: 1px solid rgba(110,145,200,0.18);
+  border-radius: var(--br-radius);
+  padding: 20px 22px;
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.04),
+    0 18px 36px -24px rgba(34,211,238,0.45);
+  transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+}
+.br-docs-card:hover {
+  border-color: rgba(34,211,238,0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(34,211,238,0.18),
+    0 22px 44px -22px rgba(34,211,238,0.55);
+  transform: translateY(-1px);
+}
+.br-docs-card-h {
+  margin: 0 0 12px;
+  font-family: var(--br-mono);
+  font-size: 13px;
+  letter-spacing: 0.32em;
+  color: var(--br-cyan);
+  text-shadow: 0 0 10px rgba(34,211,238,0.35);
+}
+
+/* List */
+.br-docs-list {
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 14.5px; line-height: 1.65;
+}
+.br-docs-list-item {
+  position: relative;
+  padding-left: 18px;
+  color: var(--br-text);
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.br-docs-list-item .br-docs-bullet {
+  flex: 0 0 auto;
+  margin-top: 7px;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, var(--br-cyan), var(--br-crimson));
+  box-shadow: 0 0 10px rgba(34,211,238,0.5);
+}
+
+/* Patch-note groups */
+.br-docs-groups {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.br-docs-group {
+  padding: 12px 14px 14px;
+  border-radius: var(--br-radius-s);
+  background: rgba(3,7,13,0.45);
+  border: 1px solid var(--br-line);
+}
+.br-docs-group-h {
+  margin: 0 0 10px;
+  font-family: var(--br-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  color: var(--br-cyan-2);
+  text-transform: uppercase;
+}
+
+/* Footer + lang switch */
+.br-docs-foot {
+  margin-top: 32px;
+  display: flex; justify-content: center; align-items: center;
+  gap: 10px;
+  color: var(--br-mute);
+  font-family: var(--br-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+}
+.br-docs-switch-wrap {
+  display: flex; justify-content: center;
+  margin-top: 18px;
+}
+.br-docs-switch {
+  appearance: none; cursor: pointer;
+  background: rgba(34,211,238,0.10);
+  color: var(--br-cyan);
+  border: 1px solid rgba(34,211,238,0.4);
+  border-radius: 999px;
+  padding: 10px 28px;
+  font-family: var(--br-display);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-size: 12px;
+  transition: all 160ms ease;
+}
+.br-docs-switch:hover {
+  background: rgba(34,211,238,0.18);
+  box-shadow: 0 0 22px rgba(34,211,238,0.4);
+  transform: translateY(-1px);
+}
