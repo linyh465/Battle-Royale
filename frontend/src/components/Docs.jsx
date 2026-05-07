@@ -3,66 +3,158 @@ import { Link, useParams, useNavigate } from "react-router-dom";
 import docsContent from "../data/docsContent.js";
 
 /**
- * EN: Docs.jsx (Phase 16) — interactive native React SPA documentation.
- *     Replaces the old MkDocs static site mounted at /docs. Pulls all
- *     copy from src/data/docsContent.js so the component stays focused
- *     on layout / animation. Strict mono-lingual rendering: /docs/en
- *     reads ONLY the `en` tree, /docs/zh-TW reads ONLY the `zh-TW`
- *     tree — no per-string fallback into the other language.
+ * EN: Docs.jsx (Phase 16.6) — interactive native React SPA documentation.
+ *     Fully refactored to consume the Phase 16.5 nested-object data shape:
+ *       docsContent.en.<category>.<document>  → Markdown string
+ *       docsContent.zhTW.<category>.<document> → Markdown string
  *
- *     Layout:
- *       - Cyberpunk shell: ambient grid + animated scanline overlay
- *         (.br-docs-scan), neon glow on the title (typewriter effect).
- *       - Sidebar (desktop) / horizontal tab strip (mobile) navigates
- *         between the four top-level categories declared in
- *         docsContent.js (Game Manual / Admin Guide / Tech / Patch Notes).
- *       - Content cards use .br-glass styling from theme.css with a
- *         subtle entry animation (brDocsRise) staggered per section.
- *       - Patch-note sections support an optional `groups` shape so
- *         v1.5 can render Gameplay / Backend / Admin sub-headers.
+ *     The old `categories[]` array is gone. Navigation is now two-level:
+ *       1. Sidebar categories (gameManual, adminGuide, techArch, history)
+ *       2. Sub-document tabs within each category (e.g. index, setup, etc.)
  *
- *     Routes (App.jsx wires these — unchanged from Phase 15):
+ *     Markdown rendering is handled by a built-in lightweight renderer
+ *     (no external dependency) supporting headings, bold, inline code,
+ *     code blocks, tables, blockquotes, and lists.
+ *
+ *     Routes (unchanged from Phase 15):
  *       /docs        → Navigate to /docs/en
  *       /docs/en     → English tree
  *       /docs/zh-TW  → Traditional Chinese tree
  *
- * zh-TW: Docs.jsx（Phase 16）— 互動式原生 React SPA 文件。
- *     完全取代舊版 MkDocs，所有文案集中在 src/data/docsContent.js，
- *     此元件只專注於排版 / 動畫。嚴格單一語系：/docs/en 只讀 `en` 子樹、
- *     /docs/zh-TW 只讀 `zh-TW` 子樹，不做任何單字串 fallback。
+ * zh-TW: Docs.jsx（Phase 16.6）— 互動式原生 React SPA 文件。
+ *     完全重構以讀取 Phase 16.5 的巢狀物件資料結構：
+ *       docsContent.en.<分類>.<文件>  → Markdown 字串
+ *       docsContent.zhTW.<分類>.<文件> → Markdown 字串
  *
- *     排版：
- *       - 賽博龐克外殼：環境格線 + 動態掃描線 overlay（.br-docs-scan），
- *         主標題使用霓虹光暈 + 打字機效果。
- *       - 桌面顯示為左側 sidebar、行動裝置切換為水平 tab，導覽
- *         docsContent.js 中宣告的四個頂層分類（遊戲操作手冊 /
- *         管理員指南 / 技術架構 / 更新日誌）。
- *       - 內容卡片沿用 theme.css 的 .br-glass 樣式，並加上分段錯開
- *         的進場動畫（brDocsRise）。
- *       - 更新日誌的 sections 支援 `groups` 結構，讓 v1.5 可以分群
- *         呈現「玩法與操作 / 後端與物理 / 管理員與追蹤」。
+ *     舊版 `categories[]` 陣列已移除。導覽改為兩層：
+ *       1. 側欄分類（gameManual、adminGuide、techArch、history）
+ *       2. 各分類內的子文件頁籤（如 index、setup 等）
+ *
+ *     Markdown 由內建輕量渲染器處理（無外部相依），支援標題、粗體、
+ *     行內程式碼、程式碼區塊、表格、引用區塊及清單。
  */
 
 const VALID_LANGS = new Set(["en", "zh-TW"]);
+
+// ─────────────────────────────────────────────────────────────────────
+// EN: Category metadata — maps object keys to display info.
+//     The order here determines sidebar rendering order.
+// zh-TW: 分類元資料 — 將物件鍵對應至顯示資訊。
+//     此處順序決定側欄渲染順序。
+// ─────────────────────────────────────────────────────────────────────
+const CATEGORY_META = {
+  gameManual: {
+    icon: "▣",
+    label: { en: "Game Manual", "zh-TW": "遊戲操作手冊" },
+    tagline: {
+      en: "Rules, controls, and HUD overview.",
+      "zh-TW": "規則、操作方式與 HUD 介面說明。",
+    },
+  },
+  adminGuide: {
+    icon: "◆",
+    label: { en: "Admin Guide", "zh-TW": "管理員指南" },
+    tagline: {
+      en: "Setup, deployment, and modification reference.",
+      "zh-TW": "建置、部署與修改參考指南。",
+    },
+  },
+  techArch: {
+    icon: "▲",
+    label: { en: "Tech Architecture", "zh-TW": "技術架構" },
+    tagline: {
+      en: "Advanced systems, routing, and internals.",
+      "zh-TW": "進階系統、路由與內部結構。",
+    },
+  },
+  history: {
+    icon: "⌬",
+    label: { en: "Dev History", "zh-TW": "開發歷程" },
+    tagline: {
+      en: "Development log and design decisions.",
+      "zh-TW": "開發日誌與設計決策。",
+    },
+  },
+};
+
+// EN: Ordered list of category keys — controls sidebar render order.
+// zh-TW: 分類鍵的排序列表 — 控制側欄渲染順序。
+const CATEGORY_KEYS = Object.keys(CATEGORY_META);
+
+// EN: Maps camelCase document keys to human-readable labels.
+// zh-TW: 將 camelCase 文件鍵對應為人類可讀標籤。
+const DOC_LABELS = {
+  index:              { en: "Overview",          "zh-TW": "總覽" },
+  gameplayMechanics:  { en: "Gameplay",          "zh-TW": "遊戲機制" },
+  uiComponents:       { en: "UI Components",     "zh-TW": "UI 元件" },
+  mobileControls:     { en: "Mobile Controls",   "zh-TW": "行動操作" },
+  setup:              { en: "Setup",             "zh-TW": "環境建置" },
+  deploymentGuide:    { en: "Deployment",        "zh-TW": "部署指南" },
+  modificationGuide:  { en: "Modifications",     "zh-TW": "修改指南" },
+  stressTesting:      { en: "Stress Testing",    "zh-TW": "壓力測試" },
+  advancedSystems:    { en: "Advanced Systems",  "zh-TW": "進階系統" },
+  routingGuide:       { en: "Routing",           "zh-TW": "路由指南" },
+  developmentLog:     { en: "Dev Log",           "zh-TW": "開發日誌" },
+  designLog:          { en: "Design Log",        "zh-TW": "設計日誌" },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// EN: Site-level metadata (bilingual).
+// zh-TW: 網站層級元資料（雙語）。
+// ─────────────────────────────────────────────────────────────────────
+const SITE_META = {
+  en: {
+    title: "BATTLE ROYALE · OPERATIONS MANUAL",
+    subtitle: "Build 1.5 · Twin-stick combat · Sandbox brawl",
+    build: "v1.5",
+  },
+  "zh-TW": {
+    title: "競技場 · 餘燼協定 操作手冊",
+    subtitle: "v1.5 版本 · 雙搖桿戰鬥 · 賽後沙盒",
+    build: "v1.5",
+  },
+};
 
 export default function Docs() {
   const params = useParams();
   const navigate = useNavigate();
   const lang = VALID_LANGS.has(params.lang) ? params.lang : "en";
-  const data = docsContent[lang];
+
+  // EN: Resolve the data key — URL uses "zh-TW" but the object key is "zhTW".
+  // zh-TW: 解析資料鍵 — URL 使用 "zh-TW" 但物件鍵是 "zhTW"。
+  const dataKey = lang === "zh-TW" ? "zhTW" : "en";
+  const data = docsContent[dataKey];
+  const meta = SITE_META[lang];
   const switchTo = lang === "en" ? "zh-TW" : "en";
 
-  // EN: Active sidebar category. Defaults to the first one declared in
-  //     docsContent.js. Reset whenever the lang switch unmounts/remounts.
-  // zh-TW: 目前選中的分類。預設取 docsContent.js 中宣告的第一個分類。
-  //     語言切換時頁面會 unmount 重掛載，state 自動歸零。
-  const [activeId, setActiveId] = useState(data.categories[0].id);
-  const activeCategory =
-    data.categories.find((c) => c.id === activeId) || data.categories[0];
+  // EN: Active category. Defaults to the first key.
+  // zh-TW: 目前選中的分類。預設第一個。
+  const [activeCatKey, setActiveCatKey] = useState(CATEGORY_KEYS[0]);
 
-  // EN: Inject keyframes once. The page may unmount/remount on lang
-  //     toggle; we don't want duplicated <style> tags piling up.
-  // zh-TW: keyframes 只注入一次。語言切換時頁面會重掛載，避免重複 style。
+  // EN: Active document within the selected category.
+  //     Resets to the first doc when switching categories.
+  // zh-TW: 選中分類內的活躍文件。切換分類時重設為第一份文件。
+  const [activeDocKey, setActiveDocKey] = useState(() => {
+    const catData = data[CATEGORY_KEYS[0]];
+    return catData ? Object.keys(catData)[0] : "";
+  });
+
+  // EN: When category changes, reset active doc to the first one in that category.
+  // zh-TW: 切換分類時，將活躍文件重設為該分類的第一份。
+  useEffect(() => {
+    const catData = data[activeCatKey];
+    if (catData) {
+      setActiveDocKey(Object.keys(catData)[0]);
+    }
+  }, [activeCatKey, data]);
+
+  const catMeta = CATEGORY_META[activeCatKey];
+  const catData = data[activeCatKey] || {};
+  const docKeys = Object.keys(catData);
+  const markdownContent = catData[activeDocKey] || "";
+
+  // EN: Inject keyframes once.
+  // zh-TW: keyframes 只注入一次。
   useEffect(() => {
     const id = "br-docs-keyframes";
     if (document.getElementById(id)) return;
@@ -78,8 +170,6 @@ export default function Docs() {
     document.head.appendChild(s);
   }, []);
 
-  const switchLabel =
-    switchTo === "en" ? "READ IN ENGLISH" : "切換為繁體中文";
   const backLabel = lang === "en" ? "BACK TO LOBBY" : "返回大廳";
 
   return (
@@ -115,46 +205,75 @@ export default function Docs() {
 
         {/* Title block — animated typewriter + glow */}
         <h1 className="br-docs-title">
-          <Typewriter text={data.meta.title} />
+          <Typewriter text={meta.title} />
           <span className="br-docs-caret">▍</span>
         </h1>
         <p className="br-docs-subtitle">
-          <span className="br-docs-build">{data.meta.build}</span>
+          <span className="br-docs-build">{meta.build}</span>
           <span className="br-docs-sep">·</span>
-          {data.meta.subtitle}
+          {meta.subtitle}
         </p>
 
         {/* Body — sidebar nav + content */}
         <div className="br-docs-body">
-          {/* EN: Nav. On desktop this becomes a vertical sidebar via CSS;
-                 on mobile it rolls up into a horizontal tab strip.
-              zh-TW: 導覽。桌面為垂直 sidebar、行動裝置為水平 tab。 */}
+          {/* EN: Sidebar — categories + sub-docs.
+              zh-TW: 側欄 — 分類 + 子文件。 */}
           <nav className="br-docs-nav" aria-label="Categories">
-            {data.categories.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setActiveId(cat.id)}
-                className={`br-docs-nav-btn ${cat.id === activeId ? "is-active" : ""}`}
-              >
-                <span className="br-docs-nav-icon">{cat.icon}</span>
-                <span className="br-docs-nav-label">{cat.label}</span>
-              </button>
-            ))}
+            {CATEGORY_KEYS.map((catKey) => {
+              const cm = CATEGORY_META[catKey];
+              const isActiveCat = catKey === activeCatKey;
+              return (
+                <div key={catKey}>
+                  <button
+                    onClick={() => setActiveCatKey(catKey)}
+                    className={`br-docs-nav-btn ${isActiveCat ? "is-active" : ""}`}
+                  >
+                    <span className="br-docs-nav-icon">{cm.icon}</span>
+                    <span className="br-docs-nav-label">{cm.label[lang]}</span>
+                  </button>
+
+                  {/* EN: Sub-doc tabs — shown only for the active category.
+                      zh-TW: 子文件頁籤 — 僅顯示於選中的分類。 */}
+                  {isActiveCat && (
+                    <div className="br-docs-subdocs">
+                      {Object.keys(data[catKey] || {}).map((dk) => (
+                        <button
+                          key={dk}
+                          onClick={() => setActiveDocKey(dk)}
+                          className={`br-docs-subdoc-btn ${dk === activeDocKey ? "is-active" : ""}`}
+                        >
+                          {(DOC_LABELS[dk] && DOC_LABELS[dk][lang]) || dk}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </nav>
 
           {/* Content area */}
-          <main className="br-docs-content" key={activeCategory.id}>
+          <main className="br-docs-content" key={`${activeCatKey}-${activeDocKey}`}>
             <div className="br-docs-cat-head">
-              <span className="br-docs-cat-icon">{activeCategory.icon}</span>
+              <span className="br-docs-cat-icon">{catMeta.icon}</span>
               <div>
-                <h2 className="br-docs-cat-title">{activeCategory.label}</h2>
-                <p className="br-docs-cat-tagline">{activeCategory.tagline}</p>
+                <h2 className="br-docs-cat-title">{catMeta.label[lang]}</h2>
+                <p className="br-docs-cat-tagline">{catMeta.tagline[lang]}</p>
               </div>
             </div>
 
-            {activeCategory.sections.map((sec, idx) => (
-              <SectionCard key={sec.heading} section={sec} index={idx} />
-            ))}
+            {/* EN: Render the selected Markdown document.
+                zh-TW: 渲染選取的 Markdown 文件。 */}
+            <section
+              className="br-docs-card"
+              style={{ animation: "brDocsRise 480ms ease-out backwards" }}
+            >
+              <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--tl" />
+              <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--tr" />
+              <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--bl" />
+              <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--br" />
+              <MarkdownRenderer content={markdownContent} />
+            </section>
           </main>
         </div>
 
@@ -162,7 +281,7 @@ export default function Docs() {
         <footer className="br-docs-foot">
           <span>● BATTLE-ROYALE</span>
           <span className="br-docs-sep">·</span>
-          <span>{data.meta.build}</span>
+          <span>{meta.build}</span>
           <span className="br-docs-sep">·</span>
           <span>{lang === "en" ? "DOCS" : "文件"}</span>
         </footer>
@@ -172,7 +291,7 @@ export default function Docs() {
             className="br-docs-switch"
             onClick={() => navigate(`/docs/${switchTo}`)}
           >
-            ▸ {switchLabel}
+            ▸ {switchTo === "en" ? "READ IN ENGLISH" : "切換為繁體中文"}
           </button>
         </div>
       </div>
@@ -181,51 +300,228 @@ export default function Docs() {
 }
 
 // ---------------------------------------------------------------------------
-// EN: One section card. Supports both the simple `body: string[]` shape and
-//     the grouped `groups: [{ title, body }]` shape used by Patch Notes.
-// zh-TW: 單一段落卡片。同時支援簡單 `body: string[]` 與更新日誌使用的
-//     分組 `groups: [{ title, body }]` 結構。
+// EN: Lightweight built-in Markdown renderer. Supports:
+//       # ## ### headings, **bold**, `inline code`, ```code blocks```,
+//       | tables |, > blockquotes, - unordered lists.
+//     No external dependencies required.
+// zh-TW: 內建輕量 Markdown 渲染器。支援：
+//       # ## ### 標題、**粗體**、`行內程式碼`、```程式碼區塊```、
+//       | 表格 |、> 引用區塊、- 無序清單。
+//     無須外部相依。
 // ---------------------------------------------------------------------------
-function SectionCard({ section, index }) {
-  return (
-    <section
-      className="br-docs-card"
-      style={{ animation: `brDocsRise 480ms ease-out ${index * 90}ms backwards` }}
-    >
-      <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--tl" />
-      <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--tr" />
-      <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--bl" />
-      <div className="br-glass-corner br-glass-corner--cyan br-glass-corner--br" />
-
-      <h3 className="br-docs-card-h">{section.heading}</h3>
-
-      {section.groups ? (
-        <div className="br-docs-groups">
-          {section.groups.map((g) => (
-            <div key={g.title} className="br-docs-group">
-              <h4 className="br-docs-group-h">{g.title}</h4>
-              <BulletList lines={g.body} />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <BulletList lines={section.body} />
-      )}
-    </section>
-  );
+function MarkdownRenderer({ content }) {
+  const elements = useMemo(() => parseMarkdown(content || ""), [content]);
+  return <div className="br-md">{elements}</div>;
 }
 
-function BulletList({ lines }) {
-  return (
-    <ul className="br-docs-list">
-      {lines.map((line, i) => (
-        <li key={i} className="br-docs-list-item">
-          <span className="br-docs-bullet" aria-hidden />
-          <span>{line}</span>
-        </li>
-      ))}
-    </ul>
-  );
+function parseMarkdown(md) {
+  const lines = md.split("\n");
+  const elements = [];
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // --- Code block ---
+    if (line.trimStart().startsWith("```")) {
+      const lang = line.trimStart().slice(3).trim();
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trimStart().startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      elements.push(
+        <pre key={key++} className="br-md-pre">
+          <code className={`br-md-code ${lang ? `language-${lang}` : ""}`}>
+            {codeLines.join("\n")}
+          </code>
+        </pre>
+      );
+      continue;
+    }
+
+    // --- Table ---
+    if (line.includes("|") && line.trim().startsWith("|")) {
+      const tableLines = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim().startsWith("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      if (tableLines.length >= 2) {
+        // First line = header, second line = separator, rest = body rows
+        const parseRow = (row) =>
+          row.split("|").filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim());
+        const headers = parseRow(tableLines[0]);
+        const bodyRows = tableLines.slice(2).map(parseRow);
+        elements.push(
+          <div key={key++} className="br-md-table-wrap">
+            <table className="br-md-table">
+              <thead>
+                <tr>
+                  {headers.map((h, hi) => (
+                    <th key={hi}>{renderInline(h)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => (
+                      <td key={ci}>{renderInline(cell)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      continue;
+    }
+
+    // --- Heading ---
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2];
+      const Tag = level === 1 ? "h3" : level === 2 ? "h4" : "h5";
+      const className =
+        level === 1 ? "br-md-h1" : level === 2 ? "br-md-h2" : "br-md-h3";
+      elements.push(
+        <Tag key={key++} className={className}>{renderInline(text)}</Tag>
+      );
+      i++;
+      continue;
+    }
+
+    // --- Blockquote ---
+    if (line.trimStart().startsWith("> ")) {
+      const quoteLines = [];
+      while (i < lines.length && lines[i].trimStart().startsWith("> ")) {
+        quoteLines.push(lines[i].trimStart().replace(/^>\s?/, ""));
+        i++;
+      }
+      elements.push(
+        <blockquote key={key++} className="br-md-blockquote">
+          {quoteLines.map((ql, qi) => (
+            <p key={qi}>{renderInline(ql)}</p>
+          ))}
+        </blockquote>
+      );
+      continue;
+    }
+
+    // --- Unordered list ---
+    if (line.match(/^\s*[-*]\s+/)) {
+      const listItems = [];
+      while (i < lines.length && lines[i].match(/^\s*[-*]\s+/)) {
+        listItems.push(lines[i].replace(/^\s*[-*]\s+/, ""));
+        i++;
+      }
+      elements.push(
+        <ul key={key++} className="br-docs-list">
+          {listItems.map((li, liIdx) => (
+            <li key={liIdx} className="br-docs-list-item">
+              <span className="br-docs-bullet" aria-hidden />
+              <span>{renderInline(li)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    // --- Ordered list ---
+    if (line.match(/^\s*\d+\.\s+/)) {
+      const listItems = [];
+      while (i < lines.length && lines[i].match(/^\s*\d+\.\s+/)) {
+        listItems.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
+        i++;
+      }
+      elements.push(
+        <ol key={key++} className="br-md-ol">
+          {listItems.map((li, liIdx) => (
+            <li key={liIdx}>{renderInline(li)}</li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // --- Blank line ---
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // --- Paragraph ---
+    elements.push(
+      <p key={key++} className="br-md-p">{renderInline(line)}</p>
+    );
+    i++;
+  }
+
+  return elements;
+}
+
+// EN: Inline Markdown rendering — handles **bold**, `code`, and plain text.
+// zh-TW: 行內 Markdown 渲染 — 處理 **粗體**、`程式碼`、純文字。
+function renderInline(text) {
+  if (!text) return text;
+  // Split on inline patterns: **bold** and `code`
+  const parts = [];
+  let remaining = text;
+  let k = 0;
+
+  while (remaining.length > 0) {
+    // Find earliest match
+    const boldIdx = remaining.indexOf("**");
+    const codeIdx = remaining.indexOf("`");
+
+    if (boldIdx === -1 && codeIdx === -1) {
+      parts.push(remaining);
+      break;
+    }
+
+    // Handle whichever comes first
+    const firstBold = boldIdx >= 0 ? boldIdx : Infinity;
+    const firstCode = codeIdx >= 0 ? codeIdx : Infinity;
+
+    if (firstBold <= firstCode) {
+      // Bold
+      if (boldIdx > 0) parts.push(remaining.slice(0, boldIdx));
+      const endBold = remaining.indexOf("**", boldIdx + 2);
+      if (endBold === -1) {
+        parts.push(remaining.slice(boldIdx));
+        break;
+      }
+      parts.push(
+        <strong key={`b${k++}`} className="br-md-bold">
+          {remaining.slice(boldIdx + 2, endBold)}
+        </strong>
+      );
+      remaining = remaining.slice(endBold + 2);
+    } else {
+      // Inline code
+      if (codeIdx > 0) parts.push(remaining.slice(0, codeIdx));
+      const endCode = remaining.indexOf("`", codeIdx + 1);
+      if (endCode === -1) {
+        parts.push(remaining.slice(codeIdx));
+        break;
+      }
+      parts.push(
+        <code key={`c${k++}`} className="br-md-inline-code">
+          {remaining.slice(codeIdx + 1, endCode)}
+        </code>
+      );
+      remaining = remaining.slice(endCode + 1);
+    }
+  }
+
+  return parts.length === 1 ? parts[0] : parts;
 }
 
 // ---------------------------------------------------------------------------
