@@ -1,0 +1,31 @@
+site_name: Battle Royale Docs
+site_description: 2D top-down multiplayer battle royale built with FastAPI + React 18.
+docs_dir: docs
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+    - toc.integrate
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: amber
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+nav:
+  - Overview: index.md
+  - Setup: setup.md
+  - Development Log: development_log.md
+  - Modification Guide: modification_guide.md
+  - UI Components: ui_components.md
+  - Mobile Controls: mobile_controls.md
+  - Advanced Systems: advanced_systems.md
+  - Design Log (raw): design_log.md

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="description" content="Battle Royale — Continuous Deathmatch Arena | 持續餘燼競技場" />
+    <title>Battle Royale · 餘燼競技場</title>
+    <!-- EN: Google Fonts — Inter for body, Rajdhani for display, JetBrains Mono for code -->
+    <!-- zh-TW: Google Fonts — Inter 用於內文、Rajdhani 用於標題、JetBrains Mono 用於等寬字 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      html, body, #root { height: 100%; margin: 0; background: #03060d; color: #d8e6ff;
+        font-family: "Inter", "SF Pro Text", system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      input, select, button { font-family: inherit; }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      /* Mobile safe area support */
+      .br-lobby, .br-admin, .br-death {
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+      }
+      /* Responsive base font size */
+      @media (max-width: 600px) {
+        html { font-size: 14px; }
+        .br-cta { font-size: 14px !important; padding: 14px 18px !important; }
+        .br-loadout-card { padding: 10px 8px !important; }
+        .br-input { font-size: 15px !important; padding: 10px 12px !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
