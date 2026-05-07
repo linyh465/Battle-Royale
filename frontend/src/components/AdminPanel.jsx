@@ -452,6 +452,23 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                   欄位顯示 IP 與截短的 User-Agent（hover 顯示完整 UA）。
                   此欄僅出現在 AdminPanel；一般玩家快照不帶這份資料，
                   普通玩家絕對看不到其他玩家的設備資訊。 */}
+          {/* EN: Phase 16.9 — Player List table refactored for better
+                  readability at scale. Key changes:
+                  • 9-column CSS grid with sensible width proportions
+                  • Sticky header (stays visible when scrolling 60+ rows)
+                  • Increased cell padding (px-4 py-3 equivalent)
+                  • Center-aligned stat columns, left-aligned text columns
+                  • Device cell uses CSS truncation (br-td--device) with
+                    full UA string exposed via native `title` tooltip
+                  • Enhanced row hover for easier cross-row reading
+              zh-TW: Phase 16.9 — 玩家列表重構，改善大量玩家時的可讀性：
+                  • 9 欄 CSS grid，比例合理
+                  • 固定表頭（捲動 60+ 列時仍可見）
+                  • 加大儲存格間距
+                  • 數值欄置中、文字欄靠左
+                  • 設備欄改用 CSS 截斷（br-td--device），完整 UA 由
+                    原生 `title` tooltip 顯示
+                  • 增強列 hover 效果便於跨欄閱讀 */}
           <div className="br-table">
             <div className="br-table-head">
               <span className="br-th br-th--idx">#</span>
@@ -461,10 +478,8 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               <span className="br-th br-th--num">D</span>
               <span className="br-th br-th--num">DMG</span>
               <span className="br-th br-th--state">STATE</span>
-              <span className="br-th" style={{ minWidth: 180, flex: "1 1 180px" }}>
-                {t.adminDevice}
-              </span>
-              <span className="br-th br-th--act" style={{ minWidth: 140 }}>ACTION</span>
+              <span className="br-th br-th--device">{t.adminDevice}</span>
+              <span className="br-th br-th--act">ACTION</span>
             </div>
 
             <div className="br-table-body">
@@ -472,7 +487,6 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                 const dev = (snap?.devices && snap.devices[p.id]) || null;
                 const ip = dev?.ip || "";
                 const ua = dev?.ua || "";
-                const uaShort = ua.length > 38 ? ua.slice(0, 36) + "…" : ua;
                 return (
                   <div className={`br-tr ${p.is_bot ? "is-bot" : ""}`} key={p.id}>
                     <span className="br-td br-td--idx">{String(i + 1).padStart(2, "0")}</span>
@@ -494,27 +508,27 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                     <span className="br-td br-td--num br-mono br-mute">{p.deaths ?? 0}</span>
                     <span className="br-td br-td--num br-mono br-cyan">{Math.round(p.damage_dealt ?? 0)}</span>
                     <span className="br-td br-td--state"><StateBadge state={p.state} /></span>
+                    {/* EN: Phase 16.9 — Device cell. CSS class `br-td--device`
+                            handles truncation; `title` exposes the full UA/IP
+                            via native browser tooltip on hover.
+                        zh-TW: Phase 16.9 — 設備欄位。`br-td--device` CSS 類別
+                            負責截斷；`title` 透過瀏覽器原生 tooltip 顯示
+                            完整 UA / IP。 */}
                     <span
-                      className="br-td"
-                      style={{
-                        minWidth: 180, flex: "1 1 180px",
-                        fontFamily: "var(--br-mono)", fontSize: 11,
-                        color: "#91a3c4", lineHeight: 1.35,
-                        overflow: "hidden",
-                      }}
+                      className="br-td br-td--device"
                       title={ua ? `${t.adminIp}: ${ip}\n${t.adminUserAgent}: ${ua}` : t.adminDevice}
                     >
                       {p.is_bot ? (
                         <span className="br-mute">—</span>
                       ) : (
-                        <span style={{ display: "inline-flex", flexDirection: "column" }}>
-                          <span style={{ color: "#22d3ee" }}>{ip || "—"}</span>
+                        <span style={{ display: "inline-flex", flexDirection: "column", minWidth: 0 }}>
+                          <span style={{ color: "#22d3ee", fontFamily: "var(--br-mono)", fontSize: 11 }}>{ip || "—"}</span>
                           <span style={{
-                            color: "#5a6b8a",
+                            color: "#5a6b8a", fontFamily: "var(--br-mono)", fontSize: 10,
                             overflow: "hidden", textOverflow: "ellipsis",
-                            whiteSpace: "nowrap", maxWidth: 220,
+                            whiteSpace: "nowrap",
                           }}>
-                            {uaShort || "—"}
+                            {ua || "—"}
                           </span>
                         </span>
                       )}
