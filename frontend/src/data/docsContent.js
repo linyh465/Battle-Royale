@@ -1,5 +1,5 @@
 /**
- * docsContent.js — Phase 16.8 Drift-Corrected Migration
+ * docsContent.js — Phase 17 — Global Pause, HUD Scaling, Minimap 16:9
  *
  * Single source-of-truth for all bilingual documentation.
  * Consumed by Docs.jsx (React SPA at /docs/en and /docs/zh-TW).
@@ -77,13 +77,13 @@ The Lobby generates a QR code dynamically using \`window.location.origin\`. Sinc
 
 ## Global Mini-Map
 
-- **Size:** 180×180 panel drawn directly in \`GameCanvas\` via \`rAF\`.
+- **Size:** 160×90 panel (16:9 aspect ratio) drawn directly in \`GameCanvas\` via \`rAF\`.
 - **Performance:** O(N).
 - **Indicators:** Green dot for local player, red for enemies.
 
 ## HUD Readout
 
-Five always-on telemetry tiles: **HP · Weapon · Kills · Match Timer · Players Alive**. The full leaderboard panel is scrollable; the local player's row is highlighted in cyan.`,
+Compact top-right panel (~50% scale): **Player · Alive · Awaiting Respawn · HP · Weapon · Kills · Deaths** (Kills/Deaths only visible during PLAYING state). The full leaderboard panel is scrollable; the local player’s row is highlighted in cyan.`,
 
       mobileControls: `# Mobile Controls — Twin-Stick System
 
@@ -268,7 +268,14 @@ All unknown routes fall back to \`index.html\`, handled by React Router. Unmatch
 - Post-Game Sandbox (frozen leaderboard + sandbox brawl)
 - Admin device tracking (\`engine.devices\`)
 - MkDocs deprecated → native React SPA documentation
-- CCD fix for sniper bullet tunneling`,
+- CCD fix for sniper bullet tunneling
+
+## Phase 17 — Global Pause & UI Polish
+
+- **Admin Pause Screen:** New \`match_paused\` + \`pause_message\` in \`GameSettings\`. The Admin Dashboard has a toggle for “Pause Match (暫停比賽)” and a text input for the pause message. When activated, ALL clients see an unclosable full-screen overlay (“遊戲暫停 清掃戰場”) and no local input (movement/firing) is processed.
+- **HUD Scaling:** The top-right HUD panel is scaled down ~50% (font 9px, panel width 150px, tight row spacing) for a compact, professional look.
+- **HUD Match Stats:** Kills (擊殺) and Deaths (死亡) are now displayed on the HUD, but only during \`PLAYING\` state (hidden during POST_GAME sandbox).
+- **Minimap 16:9:** \`MINIMAP_SIZE\` replaced with \`MINIMAP_W=160\` / \`MINIMAP_H=90\` matching the world’s 2560×1440 aspect ratio. No more square distortion.`,
 
       designLog: `# Design Log — Battle Royale
 
@@ -347,13 +354,13 @@ All unknown routes fall back to \`index.html\`, handled by React Router. Unmatch
 
 ## 全域小地圖
 
-- **大小：** 180×180 面板直接在 \`GameCanvas\` 畫出。
+- **大小：** 160×90 面板（16:9 比例）直接在 \`GameCanvas\` 畫出。
 - **效能：** O(N)。
 - **標示：** 本機綠點、他人紅點。
 
 ## HUD 遙測面板
 
-五項常駐遙測：**HP · 武器 · 擊殺數 · 對戰倒數 · 存活玩家數**。完整排行榜面板可上下捲動；本機玩家所在列以青色高亮。`,
+緊湊右上面板（縮小約 50%）：**玩家 · 存活人數 · 等待復活 · HP · 武器 · 擊殺數 · 死亡數**（擊殺/死亡僅在 PLAYING 狀態顯示）。完整排行榜面板可上下捲動；本機玩家所在列以青色高亮。`,
 
       mobileControls: `# 行動裝置操作 — 雙搖桿系統
 
@@ -538,7 +545,14 @@ PLAYING → POST_GAME → (重置對戰) → PLAYING
 - 賽後沙盒（凍結排行榜 + 沙盒對戰）
 - 管理員裝置追蹤（\`engine.devices\`）
 - MkDocs 棄用 → 原生 React SPA 文件
-- 狙擊子彈穿透 CCD 修正`,
+- 狙擊子彈穿透 CCD 修正
+
+## Phase 17 — 全域暫停與 UI 優化
+
+- **管理員暫停畫面：** \`GameSettings\` 新增 \`match_paused\` 與 \`pause_message\`。管理員面板新增「暫停比賽」開關與暫停訊息輸入框。啟用後所有客戶端會看到不可關閉的全螢幕覆蓋層（「遊戲暫停 清掃戰場」），且不會處理任何本地輸入（移動/射擊）。
+- **HUD 縮放：** 右上 HUD 縮小約 50%（字型 9px、寬度 150px、緊湊行高），緊湊專業。
+- **HUD 比賽統計：** HUD 現在顯示擊殺數與死亡數，但僅在 \`PLAYING\` 狀態中顯示（賽後沙盒模式不顯示）。
+- **小地圖 16:9：** \`MINIMAP_SIZE\` 替換為 \`MINIMAP_W=160\` / \`MINIMAP_H=90\`，與世界地圖 2560×1440 的寬高比一致，消除方形變形。`,
 
       designLog: `# 設計日誌 — Battle Royale
 

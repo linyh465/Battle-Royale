@@ -138,6 +138,14 @@ const TRANSLATIONS = {
     docsBack: "BACK TO LOBBY",
     docsLangEn: "English",
     docsLangZh: "繁體中文",
+    // Phase 17 — Global Pause Overlay
+    pauseMatch: "Pause Match",
+    pauseMessage: "Pause Message",
+    pauseTitle: "GAME PAUSED — CLEARING BATTLEFIELD",
+    pauseTitleZh: "遊戲暫停 清掃戰場",
+    // Phase 17 — HUD Match Stats
+    hudKills: "Kills",
+    hudDeaths: "Deaths",
   },
   zh: {
     // Lobby
@@ -276,6 +284,14 @@ const TRANSLATIONS = {
     docsBack: "返回大廳",
     docsLangEn: "English",
     docsLangZh: "繁體中文",
+    // Phase 17 — 全域暫停覆蓋畫面
+    pauseMatch: "暫停比賽",
+    pauseMessage: "暫停訊息",
+    pauseTitle: "GAME PAUSED — CLEARING BATTLEFIELD",
+    pauseTitleZh: "遊戲暫停 清掃戰場",
+    // Phase 17 — HUD 比賽統計
+    hudKills: "擊殺",
+    hudDeaths: "死亡",
   },
   vi: {
     // Lobby
@@ -414,6 +430,14 @@ const TRANSLATIONS = {
     docsBack: "VỀ SẢNH",
     docsLangEn: "English",
     docsLangZh: "繁體中文",
+    // Phase 17 — Tạm dừng trận
+    pauseMatch: "Tạm dừng trận",
+    pauseMessage: "Tin nhắn tạm dừng",
+    pauseTitle: "GAME PAUSED — CLEARING BATTLEFIELD",
+    pauseTitleZh: "遊戲暫停 清掃戰場",
+    // Phase 17 — HUD thống kê
+    hudKills: "Tiêu diệt",
+    hudDeaths: "Tử vong",
   },
 };
 

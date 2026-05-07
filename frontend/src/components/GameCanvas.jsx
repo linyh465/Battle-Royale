@@ -6,7 +6,12 @@ import DeathScreen from "./DeathScreen.jsx";
 
 const INPUT_HZ = 30;
 const INPUT_DT = 1000 / INPUT_HZ;
-const MINIMAP_SIZE = 180;
+// EN: Phase 17 — minimap now uses a 16:9 rectangle (160×90) matching the
+//     world aspect ratio (2560×1440) for distortion-free rendering.
+// zh-TW: Phase 17 — 小地圖改用 16:9 矩形（160×90），與世界地圖比例（2560×1440）
+//     一致，避免變形。
+const MINIMAP_W = 160;
+const MINIMAP_H = 90;
 const PAD = 12;
 const THREAT_DOT_THRESHOLD = 0.985;
 const THREAT_RANGE = 760;
@@ -38,6 +43,11 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   //     wire 短鍵 `fl`）。
   const [showFinalBoard, setShowFinalBoard] = useState(false);
   const [resetNotice, setResetNotice] = useState(false);
+  // EN: Phase 17 — React state for the global pause overlay. Updated by the
+  //     10 Hz overlay poll so React re-renders when the admin toggles pause.
+  // zh-TW: Phase 17 — 全域暫停覆蓋層的 React 狀態。由 10 Hz overlay poll
+  //     更新，管理員切換暫停時 React 才會重新渲染。
+  const [pauseState, setPauseState] = useState({ paused: false, message: "" });
 
   const prevResetSeqRef = useRef(0);
   const prevMatchStateRef = useRef("PLAYING");
@@ -150,6 +160,10 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       // EN: Mobile + idle right-stick → keep `lastAngleRef` (no snap).
       // zh-TW: 手機 + 右搖桿放開 → 保留 lastAngleRef，不重設角度。
 
+      // EN: Phase 17 — suppress ALL input while the match is paused.
+      // zh-TW: Phase 17 — 比賽暫停時不送出任何輸入。
+      if (snap?.match_paused) return;
+
       const fire = mouseRef.current.fire || touchFireRef.current;
       send({ type: "input", dx, dy, angle, fire });
     }, INPUT_DT);
@@ -201,6 +215,15 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
           && Math.ceil(prev.respawnRemaining) === Math.ceil(next.respawnRemaining)
           && prev.canRespawn === next.canRespawn) return prev;
         return next;
+      });
+
+      // EN: Phase 17 — sync pause state so the React overlay updates.
+      // zh-TW: Phase 17 — 同步暫停狀態，讓 React 覆蓋層更新。
+      const snapPaused = !!snap.match_paused;
+      const snapPauseMsg = snap.pause_message || "";
+      setPauseState((prev) => {
+        if (prev.paused === snapPaused && prev.message === snapPauseMsg) return prev;
+        return { paused: snapPaused, message: snapPauseMsg };
       });
     }, 100);
     return () => clearInterval(id);
@@ -327,11 +350,18 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
     return { players: frozen, columns: cols };
   })();
 
+  // EN: Phase 17 — derive pause values from React state (driven by the
+  //     10 Hz overlay poll) so the overlay shows reactively.
+  // zh-TW: Phase 17 — 從 React 狀態取得暫停值（由 10 Hz overlay poll 驅動），
+  //     確保覆蓋層反應式顯示。
+  const isPaused = pauseState.paused;
+  const pauseMsg = pauseState.message;
+
   return (
     <>
       <canvas ref={canvasRef} style={{ display: "block", cursor: IS_COARSE ? "none" : "crosshair" }} />
 
-      {overlay.meState === "alive" && (
+      {overlay.meState === "alive" && !isPaused && (
         <MobileControls
           onJoystick={handleJoystick}
           onAim={handleAim}
@@ -339,7 +369,7 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         />
       )}
 
-      {overlay.meState === "dead" && (
+      {overlay.meState === "dead" && !isPaused && (
         <DeathScreen
           respawnRemaining={overlay.respawnRemaining}
           canRespawn={overlay.canRespawn}
@@ -350,7 +380,7 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         />
       )}
 
-      {overlay.meState === "spectating" && (
+      {overlay.meState === "spectating" && !isPaused && (
         <div className="br-spectate-bar">
           <button className="br-btn br-btn--ghost" onClick={() => cycleSpectate(-1)}>
             {t.previous}
@@ -393,6 +423,12 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
       )}
 
       {resetNotice && <ResetNotice label={t.matchResetNotice} />}
+
+      {/* EN: Phase 17 — full-screen unclosable pause overlay. Rendered LAST so
+              its z-index naturally sits above every other overlay.
+          zh-TW: Phase 17 — 全螢幕不可關閉的暫停覆蓋層。放在最後渲染，
+              z-index 自然高過其他所有覆蓋層。 */}
+      {isPaused && <PauseOverlay message={pauseMsg} t={t} />}
     </>
   );
 }
@@ -411,6 +447,82 @@ function ResetNotice({ label }) {
       color: "#22d3ee", textShadow: "0 0 16px rgba(34,211,238,0.7)",
     }}>
       ✓ {label}
+    </div>
+  );
+}
+
+// EN: Phase 17 — full-screen, unclosable pause overlay. The admin controls
+//     `match_paused` from the dashboard; while active, the canvas keeps drawing
+//     but ALL local input is suppressed and this overlay sits on top of
+//     everything (z-index 9999). The title is bilingual by design; the body
+//     shows whatever custom `pause_message` the admin set.
+// zh-TW: Phase 17 — 全螢幕不可關閉的暫停覆蓋層。管理員從控制台切換
+//     `match_paused`；啟用時畫布仍然渲染，但所有本地輸入被抑制，此覆蓋層
+//     位於所有元素之上（z-index 9999）。標題為雙語設計；內文顯示管理員
+//     設定的自訂 `pause_message`。
+function PauseOverlay({ message, t }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "rgba(3,6,13,0.95)",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      pointerEvents: "all",
+    }}>
+      {/* Pulsing ring decoration / 脈動環裝飾 */}
+      <div style={{
+        width: 120, height: 120, borderRadius: "50%",
+        border: "2px solid rgba(255,59,92,0.5)",
+        boxShadow: "0 0 40px rgba(255,59,92,0.3), inset 0 0 30px rgba(255,59,92,0.15)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        marginBottom: 24,
+        animation: "pulse 2s ease-in-out infinite",
+      }}>
+        <span style={{ fontSize: 48 }}>⏸</span>
+      </div>
+
+      {/* EN title / 英文標題 */}
+      <div style={{
+        fontFamily: "var(--br-display)", fontSize: "clamp(20px,5vw,42px)",
+        fontWeight: 700, letterSpacing: "0.18em", color: "#ff3b5c",
+        textShadow: "0 0 32px rgba(255,59,92,0.7)",
+        marginBottom: 4, textAlign: "center",
+      }}>
+        {t.pauseTitle}
+      </div>
+
+      {/* zh-TW subtitle / 中文副標 */}
+      <div style={{
+        fontFamily: "var(--br-display)", fontSize: "clamp(16px,4vw,28px)",
+        fontWeight: 700, letterSpacing: "0.28em", color: "#ff7a8e",
+        textShadow: "0 0 20px rgba(255,122,142,0.5)",
+        marginBottom: 20, textAlign: "center",
+      }}>
+        {t.pauseTitleZh}
+      </div>
+
+      {/* Admin custom message / 管理員自訂訊息 */}
+      {message && (
+        <div style={{
+          maxWidth: "min(90vw, 600px)",
+          fontFamily: "var(--br-mono)", fontSize: "clamp(12px,2.5vw,16px)",
+          color: "#91a3c4", textAlign: "center",
+          background: "rgba(110,145,200,0.08)",
+          border: "1px solid rgba(110,145,200,0.2)",
+          borderRadius: 10, padding: "12px 24px",
+          lineHeight: 1.6,
+        }}>
+          {message}
+        </div>
+      )}
+
+      {/* CSS animation / CSS 動畫 */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 0.8; }
+          50% { transform: scale(1.08); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -635,42 +747,48 @@ function drawPlayer(ctx, p, camX, camY, isMe) {
   ctx.textAlign = "start";
 }
 
+// EN: Phase 17 — minimap now renders a 16:9 rectangle (MINIMAP_W × MINIMAP_H)
+//     matching the world’s exact aspect ratio (2560 × 1440). No more square
+//     distortion — the map fits elegantly in the top-left corner.
+// zh-TW: Phase 17 — 小地圖改為 16:9 矩形（MINIMAP_W × MINIMAP_H），與世界
+//     地圖寬高比（2560 × 1440）完美匹配，消除方形變形。
 function drawMinimap(ctx, snap, me) {
-  const x0 = PAD, y0 = PAD, size = MINIMAP_SIZE;
+  const x0 = PAD, y0 = PAD;
+  const mw = MINIMAP_W, mh = MINIMAP_H;
   ctx.save();
   ctx.fillStyle = "rgba(11,15,23,0.78)";
-  ctx.fillRect(x0, y0, size, size);
+  ctx.fillRect(x0, y0, mw, mh);
   ctx.strokeStyle = "#475569";
-  ctx.strokeRect(x0 + 0.5, y0 + 0.5, size - 1, size - 1);
-  const sx = size / snap.world.w;
-  const sy = size / snap.world.h;
+  ctx.strokeRect(x0 + 0.5, y0 + 0.5, mw - 1, mh - 1);
+  const sx = mw / snap.world.w;
+  const sy = mh / snap.world.h;
   for (const p of snap.players ?? []) {
     if (p.state !== "alive") continue;
     const isMe = me && p.id === me.id;
     ctx.beginPath();
     ctx.fillStyle = isMe ? "#22c55e" : "#ef4444";
-    ctx.arc(x0 + (p.x + p.w / 2) * sx, y0 + (p.y + p.h / 2) * sy, isMe ? 4 : 3, 0, Math.PI * 2);
+    ctx.arc(x0 + (p.x + p.w / 2) * sx, y0 + (p.y + p.h / 2) * sy, isMe ? 3 : 2, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 }
 
-// EN: Phase 15 — top-right HUD shows EXACTLY 5 fully-translated items:
-//       1. Player name        (t.hudPlayer)
-//       2. Alive count        (t.hudAlive,    state === "alive")
-//       3. Awaiting respawn   (t.hudDead,     state === "dead")
-//       4. HP                 (t.hudHp)
-//       5. Current weapon     (t.hudWeapon — translated via t[`weapon_${id}`])
-//     Diagnostic counters (status, tick) have been removed per the brief.
-// zh-TW: Phase 15 — 右上 HUD 完全只顯示 5 項，且全部使用翻譯字串：
-//       1. 玩家名稱           (t.hudPlayer)
-//       2. 存活人數           (t.hudAlive，   state === "alive")
-//       3. 等待復活           (t.hudDead，    state === "dead")
-//       4. HP                 (t.hudHp)
-//       5. 目前武器           (t.hudWeapon — 透過 t[`weapon_${id}`] 翻譯)
-//     依規格已移除診斷用的 status / tick。
+// EN: Phase 17 — top-right HUD, SCALED DOWN ~50%. Compact font, tight spacing.
+//     Shows: Player, Alive, Dead, HP, Weapon, + Kills/Deaths (only PLAYING).
+// zh-TW: Phase 17 — 右上 HUD 縮小約 50%。緊湊字型、緊密間距。
+//     顯示：玩家、存活、死亡、HP、武器 + 擊殺/死亡（僅 PLAYING 狀態）。
 function drawHUD(ctx, snap, me, W, t) {
-  const panelW = 280, panelH = 130, x0 = W - panelW - PAD, y0 = PAD;
+  // EN: Phase 17 — check if kills/deaths stats should appear.
+  //     Only show during PLAYING state (not POST_GAME sandbox).
+  // zh-TW: Phase 17 — 檢查是否顯示擊殺/死亡統計。
+  //     僅在 PLAYING 狀態顯示（賽後沙盒不顯示）。
+  const isPlaying = (snap.match_state || "PLAYING") === "PLAYING";
+  const rowCount = isPlaying ? 7 : 5;
+
+  const panelW = 150, lh = 13, padV = 6, padH = 8;
+  const panelH = padV * 2 + rowCount * lh;
+  const x0 = W - panelW - PAD, y0 = PAD;
+
   ctx.fillStyle = "rgba(11,15,23,0.82)";
   ctx.fillRect(x0, y0, panelW, panelH);
   ctx.strokeStyle = "rgba(34,211,238,0.45)";
@@ -680,18 +798,17 @@ function drawHUD(ctx, snap, me, W, t) {
   const aliveCount = snap.players.filter((p) => p.state === "alive").length;
   const awaitingRespawn = snap.players.filter((p) => p.state === "dead").length;
 
-  ctx.font = "13px ui-monospace, monospace";
+  ctx.font = "9px ui-monospace, monospace";
   ctx.textAlign = "start";
-  let row = y0 + 22;
-  const lh = 21;
+  let row = y0 + padV + 9;
 
   const drawRow = (label, value, valueColor = "#e5e7eb") => {
     ctx.fillStyle = "#91a3c4";
-    ctx.fillText(`${label}`, x0 + 12, row);
+    ctx.fillText(label, x0 + padH, row);
     ctx.fillStyle = valueColor;
     const val = String(value);
     const metrics = ctx.measureText(val);
-    ctx.fillText(val, x0 + panelW - 12 - metrics.width, row);
+    ctx.fillText(val, x0 + panelW - padH - metrics.width, row);
     row += lh;
   };
 
@@ -705,6 +822,13 @@ function drawHUD(ctx, snap, me, W, t) {
   drawRow(`${t.hudDead}:`, awaitingRespawn, "#ff7a8e");
   drawRow(`${t.hudHp}:`, myHp);
   drawRow(`${t.hudWeapon}:`, weaponLabel, "#fbbf24");
+
+  // EN: Phase 17 — kills & deaths display (only during PLAYING match state).
+  // zh-TW: Phase 17 — 擊殺與死亡統計（僅在 PLAYING 狀態顯示）。
+  if (isPlaying && me) {
+    drawRow(`${t.hudKills}:`, me.kills ?? 0, "#fbbf24");
+    drawRow(`${t.hudDeaths}:`, me.deaths ?? 0, "#ff7a8e");
+  }
 }
 
 function drawGameTimer(ctx, W, remaining, label) {

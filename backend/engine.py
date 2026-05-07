@@ -97,6 +97,12 @@ class GameSettings:
     bot_count: int = 0
     bot_max_attack_limit: int = 2
     allowed_weapons: str = DEFAULT_ALLOWED_WEAPONS
+    # EN: Phase 17 — admin-controlled global pause. When True the entire match
+    #     freezes; the frontend renders an unclosable overlay and blocks input.
+    # zh-TW: Phase 17 — 管理員控制的全域暫停。為 True 時整場比賽凍結；
+    #     前端渲染不可關閉的覆蓋畫面並阻擋所有輸入。
+    match_paused: bool = False
+    pause_message: str = ""
 
 
 # EN: Phase 15 — admin-only device fingerprint captured at WS handshake.
@@ -265,6 +271,10 @@ class GameEngine:
                     p.weapon = cls()
 
     def apply_input(self, pid: str, msg: dict) -> None:
+        # EN: Phase 17 — drop ALL player input while the match is paused.
+        # zh-TW: Phase 17 — 比賽暫停時丟棄所有玩家輸入。
+        if self.settings.match_paused:
+            return
         p = self.players.get(pid)
         if not p or p.state != STATE_ALIVE:
             return
@@ -519,6 +529,14 @@ class GameEngine:
     def step(self, dt: float, now: float) -> None:
         self._tick += 1
 
+        # EN: Phase 17 — when the admin has paused the match, skip the entire
+        #     simulation step. Only the tick counter advances (so the snapshot
+        #     keeps broadcasting and clients see the pause overlay).
+        # zh-TW: Phase 17 — 管理員暫停時跳過整個模擬步驟。只有 tick 計數器
+        #     繼續跑（好讓快照持續廣播、客戶端看到暫停覆蓋層）。
+        if self.settings.match_paused:
+            return
+
         # EN: Phase 15 — when the timer expires we set game_over AND enter
         #     POST_GAME. Players keep playing; the leaderboard is frozen.
         # zh-TW: Phase 15 — 時間到時同時設定 game_over 並進入 POST_GAME。
@@ -760,6 +778,8 @@ class GameEngine:
                 "default_bot_hp": self.settings.default_bot_hp,
                 "allowed_weapons": self.settings.allowed_weapons,
                 "bot_max_attack_limit": self.settings.bot_max_attack_limit,
+                "match_paused": self.settings.match_paused,
+                "pause_message": self.settings.pause_message,
             },
             "go": self.game_over,
             "tr": time_remaining,

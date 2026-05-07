@@ -225,6 +225,24 @@ export default function AdminPanel({ stateRef, send, onClose }) {
         <section className="br-glass br-admin-col w-full md:w-auto">
           <PanelHead title={t.gameSettings} />
 
+          {/* EN: Phase 17 — global pause toggle + message input. Positioned
+                  at the very top of Game Settings for maximum visibility.
+              zh-TW: Phase 17 — 全域暫停 toggle + 訊息輸入框。放在遊戲設定
+                  最頂端，管理員一眼就能看到。 */}
+          <div className="br-field">
+            <label className="br-field-label">{t.pauseMatch} (暫停比賽)</label>
+            <Toggle checked={!!liveSetting("match_paused", false)} onChange={(v) => setKey("match_paused", v)} />
+          </div>
+          <TextSetting
+            label={t.pauseMessage}
+            serverValue={settings.pause_message}
+            fallback=""
+            placeholder="Enter pause reason…"
+            onCommit={(v) => setKey("pause_message", v)}
+          />
+
+          <div className="br-divider" />
+
           <div className="br-field">
             <label className="br-field-label">{t.teamMode}</label>
             <Toggle checked={!!liveSetting("team_mode", false)} onChange={(v) => setKey("team_mode", v)} />
@@ -661,6 +679,47 @@ const NumSetting = memo(function NumSetting({
         max={max}
         step={step}
         value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onFocus={() => { focusedRef.current = true; }}
+        onBlur={() => { focusedRef.current = false; commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            commit();
+            e.currentTarget.blur();
+          }
+        }}
+      />
+    </div>
+  );
+});
+
+// EN: Phase 17 — memoised text input for string settings (e.g. pause_message).
+//     Mirrors the same focus-guard pattern as NumSetting to prevent the 250 ms
+//     parent tick from clobbering the admin's typing mid-keystroke.
+// zh-TW: Phase 17 — 字串設定用的 memoised text input（如 pause_message）。
+//     沿用 NumSetting 的 focus 防護，避免 250 ms 父層 tick 蓋掉輸入中的文字。
+const TextSetting = memo(function TextSetting({
+  label, serverValue, fallback = "", placeholder = "", onCommit,
+}) {
+  const [val, setVal] = useState(() => String(serverValue ?? fallback));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) {
+      setVal(String(serverValue ?? fallback));
+    }
+  }, [serverValue, fallback]);
+
+  const commit = () => { onCommit?.(val); };
+
+  return (
+    <div className="br-field br-field--stack">
+      <label className="br-field-label">{label}</label>
+      <input
+        className="br-input"
+        type="text"
+        value={val}
+        placeholder={placeholder}
         onChange={(e) => setVal(e.target.value)}
         onFocus={() => { focusedRef.current = true; }}
         onBlur={() => { focusedRef.current = false; commit(); }}

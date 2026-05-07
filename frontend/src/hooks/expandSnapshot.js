@@ -109,23 +109,34 @@ export default function expandSnapshot(msg) {
   //     `fl`  → frozen_leaderboard (only populated in POST_GAME)
   //     `dev` → admin-only device map (player_id → {ip, ua}); will be
   //             undefined on player / director sockets.
+  // EN: Phase 17 wire additions —
+  //     `match_paused` and `pause_message` are carried inside `st` (settings)
+  //     and surfaced at the top level of the expanded snapshot for easy access.
   // zh-TW: Phase 15 線上格式新增 —
   //     `ms`  → match_state（"PLAYING" | "POST_GAME"）
   //     `fl`  → frozen_leaderboard（僅 POST_GAME 帶值）
   //     `dev` → 管理員專屬設備對照表（player_id → {ip, ua}）；
   //             玩家 / 導播 WS 不會收到，會是 undefined。
+  // zh-TW: Phase 17 —
+  //     `match_paused` 與 `pause_message` 存在 `st`（settings）裡，
+  //     展開後提升至快照頂層方便存取。
+  const st = msg.st || {};
   return {
     type: "state",
     tick: msg.t,
     now: msg.n,
     world: msg.wo,
-    settings: msg.st,
+    settings: st,
     game_over: msg.go,
     game_time_remaining: msg.tr,
     reset_seq: msg.rs,
     match_state: msg.ms || "PLAYING",
     frozen_leaderboard: Array.isArray(msg.fl) ? msg.fl : [],
     devices: msg.dev || null,
+    // EN: Phase 17 — global pause state, promoted to top-level for quick access.
+    // zh-TW: Phase 17 — 全域暫停狀態，提升至頂層方便快速存取。
+    match_paused: !!st.match_paused,
+    pause_message: st.pause_message || "",
     players,
     bullets,
   };
