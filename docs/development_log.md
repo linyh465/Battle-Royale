@@ -1,460 +1,417 @@
-# Development Log · 開發歷程
+# Development Log · 開發紀錄
 
-> A reconstruction of the conversation, prompts, and decisions made while building this project with an AI pair-programmer.
->
-> 透過 AI 協作開發本專案的提示詞、決策與時間軸完整還原。
-
----
-
-=== "English"
-
-    ### Session metadata
-
-    - **Date:** 2026-05-06
-    - **Roles:** *User* — project lead / requirements; *AI* — Expert Full-Stack Developer.
-    - **Global rules set up-front:** bilingual EN/zh-TW docs, docs-first running log, no basic-concept explanations, production-ready modular code only.
-
-    ### Phase 1 — Backend (FastAPI + OOP Game Engine)
-
-    **Prompt summary**
-    > Build a FastAPI + websockets backend. Implement OOP `GameObject` / `Player` / `Weapon` (polymorphic `fire()`) / `Bullet` under `/models`. Create `engine.py` with a 30 Hz loop, AABB collisions, JSON broadcast. Create `main.py` for WebSocket connections.
-
-    **What we produced**
-    ```
-    backend/
-    ├── main.py                  FastAPI app, /ws endpoint, lifespan-managed engine task
-    ├── engine.py                30 Hz loop, AABB collisions, snapshot broadcast
-    ├── requirements.txt         fastapi, uvicorn[standard], websockets
-    └── models/
-        ├── __init__.py          package surface
-        ├── game_object.py       GameObject + AABB intersection
-        ├── player.py            Player(GameObject) — HP, speed, weapon, input buffer
-        ├── weapon.py            Weapon base + Pistol / Rifle / Shotgun (overrides fire())
-        └── bullet.py            Bullet(GameObject) — owner, damage, TTL
-    ```
-
-    **Decisions made**
-    1. *Authoritative server.* Clients send only intent (`dx`, `dy`, `angle`, `fire`); the server is the single source of truth. Cheating surface stays small.
-    2. *Dataclass-based OOP.* Each entity is a `@dataclass` so we get clean `__init__`, deterministic `to_dict()`-style serialization helpers, and easy default factories (e.g. `weapon: Weapon = field(default_factory=Pistol)`).
-    3. *Polymorphic `Weapon.fire()`.* `Pistol`/`Rifle` inherit defaults; `Shotgun.fire()` overrides to emit multiple `Bullet`s with angular spread — the textbook example for the OOP requirement.
-    4. *Tick model.* `engine.run()` lives inside FastAPI's `lifespan`; uses `asyncio.sleep(max(0, TICK_DT - elapsed))` so a slow tick doesn't drift forever. `dt` is *measured*, not assumed, so physics stays stable under jitter.
-    5. *Wire protocol.* Compact JSON: `join` / `input` / `weapon` / `ping` from client; `welcome` / `state` / `pong` from server. Full-state snapshot per tick (delta encoding deferred until profiling demands it).
-    6. *Collision.* `GameObject.collides_with` returns AABB intersection; `_resolve_bullet_hits` is an O(B·P) double loop — fine for the player counts we target.
-
-    ### Phase 2 — Frontend (React 18 + Canvas)
-
-    **Prompt summary**
-    > React 18 + Vite. WebSocket via `useGameSocket.js`. `GameCanvas.jsx` must NOT use `setState` for player/bullet coordinates — store snapshots in `useRef`, render with `requestAnimationFrame` at 60 FPS. WASD + mouse click sends JSON.
-
-    **What we produced**
-    ```
-    frontend/
-    ├── index.html, package.json, vite.config.js   /ws proxy → ws://localhost:8000
-    └── src/
-        ├── main.jsx                StrictMode root
-        ├── App.jsx                 Lobby (name + weapon) → mounts GameCanvas
-        ├── hooks/useGameSocket.js  WS lifecycle; snapshots into stateRef.current
-        └── components/GameCanvas.jsx
-                                    rAF render loop @ ~60 FPS
-                                    30 Hz input loop via setInterval
-                                    camera follows local player
-                                    drawGrid / drawPlayer / drawHUD helpers
-    ```
-
-    **Decisions made**
-    1. *Game state stays out of React.* `stateRef.current = msg` on every WS message. The component never re-renders due to gameplay updates — only `status` and `playerId` (one-shot events) live in `useState`.
-    2. *Two-clock model.* Server simulates @ 30 Hz, client paints @ display refresh. Interpolation deliberately skipped until visible jitter shows up.
-    3. *Input loop @ 30 Hz.* `setInterval` reads `keysRef`/`mouseRef` and ships `{dx, dy, angle, fire}`. WASD is normalized to a unit vector to prevent diagonal speed-boost.
-    4. *Aim is computed in world space.* Mouse client-coords + camera offset → world coords → `atan2()` to local player center. Without the camera transform, aim would lag behind movement.
-    5. *Camera = local player center.* World bounds drawn red, grid offset by camera, HUD drawn directly on the canvas (no DOM overlay).
-
-    ### Phase 3 — Documentation
-
-    **Prompt summary**
-    > Generate a static documentation site (MkDocs/VitePress) under `/docs`: `index.md`, `setup.md`, `development_log.md`, `modification_guide.md`. Both EN and zh-TW, separated within each file.
-
-    **Choices**
-    - **MkDocs Material**, single set of bilingual files (each file contains `[English Version]` and `[Traditional Chinese Version]` sections). Rationale: easier to keep parity than maintaining two parallel trees.
-    - Architecture diagrams as ASCII boxes inside fenced code blocks — renders identically in MkDocs/VitePress/GitHub.
-    - Hardware section explicit: i7-10th Gen / 16 GB RAM recommended (per project requirement).
-
-    ### Phase 4 — Admin, AI & Deathmatch Refinement
-
-    **Recent Updates (from Git log & commits)**
-    - **UI & i18n Overhaul:** Added a standalone Admin Panel (`/` vs `/?role=director`), completely redesigned Lobby UI with dynamic language toggles (EN/zh-TW/VN).
-    - **Admin Management Controls:** Implemented a non-combatant Admin role to connect via WebSocket. The admin can forcefully kill/respawn players, control the game timer, and tweak match settings.
-    - **Bot AI Behavior:** Introduced `BotPlayer` with basic AI targeting. Bots move closer to players (within 200-300 units), limit grouping (max 2 bots per target), and feature randomized firing intervals for balanced gameplay.
-    - **Deathmatch Mode:** Transitioned from a shrinking Battle Royale model to a continuous Deathmatch mode, removing the poison zone entirely.
-    - **Dynamic Respawn Penalty:** Integrated a dynamic respawn penalty system based on player death counts (e.g., base wait + `deaths * penalty_multiplier`).
-
-    ### Cross-phase architectural decisions (summary)
-
-    | # | Decision | Rationale |
-    |---|---|---|
-    | 1 | Authoritative server | Anti-cheat + single source of truth |
-    | 2 | 30 Hz simulation | Smooth enough for top-down shooter; halves bandwidth vs 60 Hz |
-    | 3 | OOP via `@dataclass` | OOP requirement satisfied; less boilerplate than plain classes |
-    | 4 | `Weapon.fire()` polymorphism | Direct demonstration of OO polymorphism (course requirement) |
-    | 5 | AABB collisions | Simple, fast, sufficient for boxy entities |
-    | 6 | `useRef` + rAF render | Avoids React reconciliation per tick — primary perf win |
-    | 7 | Vite dev proxy `/ws` | Same-origin in dev = no CORS, same wiring as prod |
-    | 8 | Bilingual single-file docs | Keep parity easy; readers see both languages side by side (Tabs) |
-
-    ### Things deliberately deferred
-
-    - Storm / shrinking play zone.
-    - Spatial hashing (only matters past ~64 entities).
-    - Client-side prediction + server reconciliation.
-    - Persistent match results (DB).
-    - Authentication / matchmaking.
-
-=== "繁體中文"
-
-    ### 對談元資料
-
-    - **日期：** 2026-05-06
-    - **角色：** *使用者* — 專案負責人／需求方；*AI* — 全端工程師助理。
-    - **全域規則**（一開始就確立）：EN/zh-TW 雙語文件、文件先行的 running log、不解釋基本概念、只給可上線的模組化程式碼。
-
-    ### Phase 1 — 後端（FastAPI + OOP 遊戲引擎）
-
-    **提示詞重點**
-    > 建立 FastAPI + websockets 後端。在 `/models` 內實作 OOP `GameObject` / `Player` / `Weapon`（多型 `fire()`）/ `Bullet`。`engine.py` 提供 30 Hz 迴圈、AABB 碰撞、JSON 廣播。`main.py` 處理 WebSocket 連線。
-
-    **最終產出**
-    ```
-    backend/
-    ├── main.py                  FastAPI 應用、/ws 端點、以 lifespan 管理引擎任務
-    ├── engine.py                30 Hz 迴圈、AABB 碰撞、快照廣播
-    ├── requirements.txt         fastapi、uvicorn[standard]、websockets
-    └── models/
-        ├── __init__.py          套件對外介面
-        ├── game_object.py       GameObject + AABB 相交檢查
-        ├── player.py            Player(GameObject) — HP、速度、武器、輸入緩衝
-        ├── weapon.py            Weapon 基底 + Pistol / Rifle / Shotgun（覆寫 fire()）
-        └── bullet.py            Bullet(GameObject) — 擁有者、傷害、存活時間
-    ```
-
-    **決策**
-    1. *權威伺服器*：客戶端只送意圖（`dx`、`dy`、`angle`、`fire`），伺服器是唯一真實狀態，作弊面縮到最小。
-    2. *以 `@dataclass` 實作 OOP*：每個實體都是 `@dataclass`，自帶 `__init__`、可序列化、預設工廠（例如 `weapon: Weapon = field(default_factory=Pistol)`）。
-    3. *多型 `Weapon.fire()`*：`Pistol`/`Rifle` 共用預設行為；`Shotgun.fire()` 覆寫產生多顆有角度散射的 `Bullet`，是課程「多型」最直接的範例。
-    4. *Tick 模型*：`engine.run()` 在 FastAPI `lifespan` 內啟動；使用 `asyncio.sleep(max(0, TICK_DT - elapsed))` 避免長期漂移；`dt` 為實測值，非假設值，模擬在抖動下仍穩定。
-    5. *通訊協定*：精簡 JSON — 客戶端 `join` / `input` / `weapon` / `ping`；伺服器 `welcome` / `state` / `pong`。每 tick 廣播完整快照，差分編碼延後處理。
-    6. *碰撞偵測*：`GameObject.collides_with` 為 AABB 相交；`_resolve_bullet_hits` 為 O(B·P) 雙層迴圈，目前玩家數規模綽綽有餘。
-
-    ### Phase 2 — 前端（React 18 + Canvas）
-
-    **提示詞重點**
-    > React 18 + Vite。WebSocket 透過 `useGameSocket.js`。`GameCanvas.jsx` 嚴格禁止用 `setState` 更新玩家/子彈座標；快照存入 `useRef`，以 `requestAnimationFrame` 60 FPS 重繪。WASD + 滑鼠點擊送出 JSON。
-
-    **最終產出**
-    ```
-    frontend/
-    ├── index.html、package.json、vite.config.js   /ws 代理至 ws://localhost:8000
-    └── src/
-        ├── main.jsx                StrictMode 進入點
-        ├── App.jsx                 大廳（名字 + 武器）→ 掛載 GameCanvas
-        ├── hooks/useGameSocket.js  WebSocket 生命週期；快照寫入 stateRef.current
-        └── components/GameCanvas.jsx
-                                    rAF 繪圖迴圈 @ 約 60 FPS
-                                    setInterval 30 Hz 輸入迴圈
-                                    攝影機跟隨本機玩家
-                                    drawGrid / drawPlayer / drawHUD 輔助函式
-    ```
-
-    **決策**
-    1. *遊戲狀態不進 React 樹*：每次 WS 訊息直接 `stateRef.current = msg`。元件不會因遊戲狀態更新而重渲染；只有 `status` 與 `playerId`（一次性事件）使用 `useState`。
-    2. *雙時鐘模型*：伺服器 30 Hz 模擬，客戶端依顯示器刷新作畫。插值（interpolation）刻意延後，看到明顯抖動再加。
-    3. *30 Hz 輸入迴圈*：`setInterval` 讀取 `keysRef`/`mouseRef` 並發送 `{dx, dy, angle, fire}`。WASD 規範化為單位向量，避免斜向加速。
-    4. *瞄準在世界座標計算*：滑鼠 client 座標 + 攝影機偏移 → 世界座標 → 對玩家中心 `atan2()`。沒做攝影機轉換的話，瞄準會落後於移動。
-    5. *攝影機 = 本機玩家中心*：世界邊界紅框、格線依攝影機偏移、HUD 直接畫在 Canvas 上（無 DOM overlay）。
-
-    ### Phase 3 — 文件
-
-    **提示詞重點**
-    > 在 `/docs` 下生成靜態文件站（MkDocs／VitePress）：`index.md`、`setup.md`、`development_log.md`、`modification_guide.md`。EN 與 zh-TW 必須在每份檔案內清楚分區。
-
-    **選擇**
-    - **MkDocs Material**，單一檔案內含雙語區塊（`[English Version]` 與 `[Traditional Chinese Version]`）。理由：比維護兩棵平行樹更容易保持版本同步。
-    - 架構圖以 ASCII 框 + fenced code 呈現 — 在 MkDocs/VitePress/GitHub 都同樣顯示。
-    - 硬體段明示：建議 i7 第 10 代 / 16 GB RAM（依專案要求）。
-
-    ### Phase 4 — 管理員、AI 與餘燼模式重構
-    
-    **近期更新與修復（基於 Git 日誌與提交）**
-    - **UI 與多語系（i18n）大改版：** 新增獨立的管理員面板路由，重新設計大廳 UI，並加入即時語系切換功能（EN/zh-TW/VN）。
-    - **管理員控制系統：** 實作「非戰鬥員」管理員角色。管理員可透過 WebSocket 連線，強制玩家死亡／重生、控制遊戲時間、調整對戰設定檔與管理機器人。
-    - **機器人 AI 行為：** 引入 `BotPlayer` 具備基礎 AI 鎖定與移動邏輯。機器人會主動靠近玩家（約 200-300 單位），限制最多 2 隻機器人圍攻同一玩家，並加入隨機射擊間隔避免火力過猛。
-    - **餘燼模式：** 將原本的「大逃殺」縮圈機制移除，轉換為無間斷的「持續餘燼模式」（Continuous Deathmatch），徹底移除毒圈邏輯。
-    - **動態重生懲罰：** 導入基於死亡次數的重生延遲懲罰系統（例如：基礎等待時間 + `死亡次數 * 懲罰倍率`）。
-    
-    ### 跨 Phase 架構決策（總表）
-
-    | # | 決策 | 理由 |
-    |---|---|---|
-    | 1 | 權威伺服器 | 防作弊 + 單一真實來源 |
-    | 2 | 30 Hz 模擬 | 俯視角射擊夠用；頻寬約為 60 Hz 的一半 |
-    | 3 | 以 `@dataclass` 實作 OOP | 滿足 OOP 要求，減少樣板碼 |
-    | 4 | `Weapon.fire()` 多型 | 直接展示 OO 多型（課程要求） |
-    | 5 | AABB 碰撞 | 簡單快速，方塊實體足夠 |
-    | 6 | `useRef` + rAF 繪圖 | 避免每 tick 觸發 React reconciliation，主要效能來源 |
-    | 7 | Vite 開發代理 `/ws` | 同源開發，無 CORS，與正式環境一致 |
-    | 8 | 雙語單檔文件 | 同步維護容易，讀者可同頁對照 |
-
-    ### 刻意延後的事項
-
-    - 縮圈（毒圈／風暴）。
-    - 空間雜湊（約 64 個實體以上才有意義）。
-    - 客戶端預測 + 伺服器調和。
-    - 比賽結果持久化（資料庫）。
-    - 身分驗證與配對系統。
+> **Format / 格式:** Keep-a-Changelog inspired, grouped by phase.
+> **Source of truth / 資料來源:** `git log --oneline --date=short` on `main`.
+> **Last updated / 最後更新:** 2026-05-07
 
 ---
 
-## Phase 9 — Production Deployment & Extreme Resource Optimization · 生產部署與極致資源最佳化
+## Overview · 總覽
 
-=== "English"
+### [English Version]
 
-    ### Session metadata
+This page is a **human-readable changelog** rebuilt from the project's actual
+git commit history. Commits are clustered into **logical phases** rather than
+listed one-by-one, so the chronology matches the way the engine was actually
+designed: a slim core first, then layered features, then UX polish. Each
+phase entry calls out:
 
-    - **Date:** 2026-05-07
-    - **Goal:** Land the project on Railway's $5/mo Hobby tier without ever
-      crossing into a paid plan, even with 40–60 concurrent players.
+- **Highlight** — the headline feature that defines the phase.
+- **Changes** — bullet-listed patch notes (Added / Changed / Removed / Fixed).
+- **Commits** — the underlying SHA(s) for traceability.
 
-    ### What we shipped
+### [繁體中文版]
 
-    1. **Single-container architecture.** A new root-level multi-stage
-       `Dockerfile` builds the Vite SPA in a Node 20 Alpine stage, then
-       copies `frontend/dist` into the Python 3.12 slim runtime. FastAPI
-       (in `backend/main.py`) now mounts the SPA via `StaticFiles` at
-       `/assets` plus a catch-all `index.html` SPA fallback. A non-root
-       `appuser` runs Uvicorn on `$PORT`.
-    2. **Idle-pause game loop.** `GameEngine.run()` blocks on a fresh
-       `asyncio.Event` whenever `len(self.players) == 0`. The event is set
-       inside `add_player()` / `add_bot()`, so the loop wakes on the first
-       connection. Stale bullets are flushed during the idle gap, and
-       `remove_player()` eagerly drops bullets owned by the disconnecting
-       player. CPU usage at zero players ≈ 0%.
-    3. **Configurable tick rate.** `TICK_RATE_HZ` env knob (clamped 5–60,
-       default 20). Canvas interpolation hides the tick reduction; the
-       broadcast volume drops linearly with tick rate.
-    4. **Minified WebSocket wire format.** Snapshots now use single-letter
-       keys (`ps`, `bs`, `i`, `nm`, `x`, `y`, `h`, `mh`, `a`, `k`, `d`,
-       `dd`, `dt`, `wp`, `s`, `ra`, `b`, `tm`, `kn`, `kw`, `al`, …).
-       Bullet w/h are constants restored client-side. `json.dumps(...,
-       separators=(",", ":"))` strips whitespace. A new
-       `frontend/src/hooks/expandSnapshot.js` re-hydrates the descriptive
-       shape so renderer code stays unchanged. ~35–45% bandwidth reduction
-       vs. the descriptive-key payload.
-    5. **Bilingual deployment guide.** New `docs/deployment_guide.md`
-       covers the architecture, idle-pause smoke test, GitHub→Railway
-       step-by-step, local production parity, and Hobby-tier sizing.
+本頁是依據專案真實 git commit 歷史重新整理的**人類可讀變更紀錄**。Commits
+以**邏輯階段**分群，而非逐筆列出，這樣時序才符合引擎實際的設計過程：先骨幹、
+再堆功能、最後做 UX 打磨。每個階段條目都會標出：
 
-    ### Decisions made
-
-    - **Single container, not two.** Railway charges per service; one
-      container collapses the cost.
-    - **Constants over wire bytes.** Player/bullet hitbox dimensions never
-      change at runtime (Phase 9 — uniform 28×28 / 6×6), so the client
-      restores them from constants instead of paying for `w`/`h` on every
-      broadcast.
-    - **Adapter, not rewrite.** `expandSnapshot()` keeps ~1.6k lines of
-      rendering code untouched; the wire format change is invisible above
-      the WS receive layer.
-
-=== "繁體中文"
-
-    ### Session metadata
-
-    - **日期：** 2026-05-07
-    - **目標：** 把專案塞進 Railway $5/月 Hobby Plan，
-      40–60 人同時上線也不破預算。
-
-    ### 這次交付的內容
-
-    1. **單一容器架構。** 新增根目錄的多階段 `Dockerfile`：
-       Node 20 Alpine 階段 build Vite SPA，
-       Python 3.12 slim 階段把 `frontend/dist` 複製進去。
-       `backend/main.py` 用 `StaticFiles` 把 SPA 掛在 `/assets`，
-       並加上 catch-all 的 `index.html` SPA fallback。
-       非 root 使用者 `appuser` 跑 Uvicorn 並綁定 `$PORT`。
-    2. **閒置暫停遊戲迴圈。** `GameEngine.run()` 在
-       `len(self.players) == 0` 時 await 一個 `asyncio.Event`。
-       事件由 `add_player()` / `add_bot()` 觸發，第一個連線進來就喚醒。
-       閒置期間順手清空殘留子彈；`remove_player()` 也會立即把該玩家的
-       子彈從場上拔掉。0 玩家時 CPU ≈ 0%。
-    3. **可調 tick 頻率。** 環境變數 `TICK_RATE_HZ`（5–60 區間，
-       預設 20）。前端 Canvas 內插填補低 tick 的視覺差距，
-       廣播量隨 tick 線性下降。
-    4. **短鍵 WebSocket 線上格式。** 快照改用單字元鍵
-       （`ps`、`bs`、`i`、`nm`、`x`、`y`、`h`、`mh`、`a`、`k`、`d`、
-       `dd`、`dt`、`wp`、`s`、`ra`、`b`、`tm`、`kn`、`kw`、`al` …）。
-       子彈寬高為常數，由前端還原；`json.dumps(...,
-       separators=(",", ":"))` 拿掉多餘空白。
-       新增 `frontend/src/hooks/expandSnapshot.js` 把短鍵還原回長鍵格式，
-       渲染端程式不必改動。相比舊版描述性鍵名約節省 35–45% 頻寬。
-    5. **雙語部署指南。** 新增 `docs/deployment_guide.md`，內容涵蓋
-       架構說明、閒置暫停冒煙測試、GitHub→Railway 步驟、本機生產
-       parity，以及 Hobby Plan 容量估算。
-
-    ### 關鍵決策
-
-    - **一個容器，不是兩個。** Railway 是「每個服務都計費」，
-      合併成單一容器最直接省錢。
-    - **能用常數就不要走線上。** Phase 9 的玩家／子彈 hitbox 是固定值
-      （28×28 / 6×6），由前端常數還原，不必每筆廣播都帶 w/h。
-    - **加 adapter，不重寫。** `expandSnapshot()` 讓約 1600 行的渲染碼
-       完全不必改動；線上格式變動只在 WS 接收層之前看得到。
+- **重點**：定義此階段的標誌性功能。
+- **變更**：條列式 patch notes（新增 / 變更 / 移除 / 修復）。
+- **對應 Commit**：底層 SHA，方便回溯。
 
 ---
 
-## Phase 10 — Production Bug Fixes, React Performance & Six-Weapon Arsenal · 生產修錯、React 效能與六種武器系統
+## [Phase 13] — Mobile UX Hardening · 行動裝置 UX 強化
 
-=== "English"
+> **Date / 日期:** 2026-05-07
 
-    ### Session metadata
+### [English Version]
 
-    - **Date:** 2026-05-07
-    - **Live domain:** `gun.piyou.me` (Railway).
-    - **Triggers:** Admin Panel input lag in production, broken QR code
-      origin on the live domain, MkDocs not reachable, and a request to
-      expand the arsenal.
+**Highlight.** Disable text selection, long-press menus, and browser-default
+swipe / pinch gestures across the play surface so mobile players cannot
+accidentally hijack their own input.
 
-    ### What we shipped
+**Changed**
 
-    1. **Admin input lag fix (CRITICAL).** Admin Panel inputs were
-       fighting a 250 ms re-render driven by the 20 Hz state ref. Every
-       keystroke snapped the input back to the server's last broadcast.
-       Fixed by introducing a memoised `<NumSetting>` component that
-       owns its local `value` state and only syncs from the server when
-       the user is **not** focused; commits go to the server on blur or
-       Enter, never on keystroke. `<PasswordChangeRow>` and
-       `<TimerSetTextRow>` follow the same pattern.
-    2. **QR code origin fix.** The lobby used to seed the QR with
-       `/api/lan-info`'s LAN IP, which is meaningless in production
-       (no Vite dev server). The lobby now uses
-       `window.location.origin` whenever the host is not loopback, so
-       phones scanning the QR on `gun.piyou.me` get the right URL
-       instantly. The `value` prop also falls back to
-       `window.location.origin` synchronously, removing the "detecting…"
-       flash.
-    3. **MkDocs routing.** FastAPI's interactive docs moved to
-       `/api-docs` and `/api-redoc` (with `swagger_ui_oauth2_redirect_url`
-       moved to `/api-docs/oauth2-redirect`). MkDocs is now mounted at
-       `/docs` via `StaticFiles(html=True)`. The SPA catch-all
-       explicitly skips `/docs`, `/api-docs`, `/api-redoc`. Dockerfile
-       grew a third stage that runs `mkdocs build --strict` against
-       `mkdocs-material 9.*` and copies `docs/site` into the runtime
-       image.
-    4. **Six-weapon arsenal.** `models/weapon.py` now defines six
-       distinct subclasses: `Pistol`, `Rifle` (Assault Rifle), `Shotgun`,
-       `Sniper`, `SMG`, `RocketLauncher`. Each has unique
-       (damage, fire_rate, bullet_speed, ttl); `RocketLauncher` also
-       declares an oversized 14×14 hitbox carried on the wire as
-       `bw`/`bh` only when non-default. `models/__init__.py` exports
-       `ALL_WEAPON_IDS` for cross-module reuse.
-    5. **Allowed-weapons whitelist + mid-match override.**
-       `GameSettings.allowed_weapons` (CSV) gates `add_player()`,
-       `set_weapon()`, and `request_respawn()`. When the admin updates
-       the list, `_sync_allowed_weapons()` walks every alive player and
-       force-reassigns anyone holding a just-disabled weapon to a random
-       allowed one — no respawn required. The empty-list edge case
-       silently falls back to "all enabled" so the lobby never bricks.
-    6. **Reactive lobby weapon picker.** A new `/api/settings` endpoint
-       exposes (`allowed_weapons`, `all_weapons`). The lobby polls it
-       every 3 s, renders all six weapon cards, and greys out disabled
-       ones. If the player's pick gets disabled mid-poll, it auto-snaps
-       to the first allowed weapon.
-    7. **Admin Weapon Arsenal UI.** Admin Panel grew a **WEAPON ARSENAL**
-       checklist that toggles the six weapons via `admin_set
-       allowed_weapons`. The UI refuses to drop the list to zero
-       (defence-in-depth even though the engine handles that case too).
-    8. **Bilingual gameplay docs update.** `docs/gameplay_mechanics.md`
-       gained a new section "Six-Weapon Arsenal & Mid-Match Override"
-       with stats table, override pseudocode, and lobby reactivity notes.
+- `frontend/src/theme.css` — added `user-select: none`,
+  `-webkit-user-select: none`, `-webkit-touch-callout: none`, and
+  `touch-action: none` rules scoped to `<canvas>`, the joystick, and the fire
+  button.
+- HUD overlays (countdown, leaderboard, spectator bar) inherit the same rule
+  set, eliminating accidental highlighting under aggressive multi-touch.
 
-    ### Decisions made
+**Underlying commit / 對應 commit**
 
-    - **Local input state with focus-aware sync.** The simplest fix that
-      survives 20 Hz state churn — no debounce, no hand-rolled diffing,
-      no `React.memo`-with-equality-fn games. The user is the source of
-      truth while focused; the server takes over again on blur.
-    - **CSV whitelist, not array.** `leaderboard_columns` already used a
-      CSV string and `admin_set` knows how to round-trip strings;
-      reusing the pattern avoids touching the admin protocol layer.
-    - **Server is the gate.** All four player-weapon paths
-      (`add_player`, `set_weapon`, `request_respawn`,
-      `_sync_allowed_weapons`) re-validate against the whitelist. The
-      lobby UI is purely UX.
-    - **/api/settings, not WS.** Lobby clients haven't connected a
-      WebSocket yet. A 3 s poll on a tiny JSON endpoint is far cheaper
-      than wiring a transient WS just for one CSV field.
+| SHA       | Subject                                                            |
+|-----------|--------------------------------------------------------------------|
+| `ed1c72a` | feat: initialize esports-themed CSS variables and utility components |
 
-=== "繁體中文"
+### [繁體中文版]
 
-    ### Session metadata
+**重點。** 在整個遊戲表面停用文字選取、長按選單，以及瀏覽器預設的滑動 /
+雙指縮放手勢，讓行動裝置玩家不會誤觸自己的操作。
 
-    - **日期：** 2026-05-07
-    - **生產網域：** `gun.piyou.me`（Railway）。
-    - **觸發點：** 生產環境的 Admin Panel 嚴重打字 lag、QR Code 仍指向
-      LAN IP、MkDocs 路由打不開，以及擴充武器系統的需求。
+**變更**
 
-    ### 這次交付的內容
+- `frontend/src/theme.css` — 加上 `user-select: none`、
+  `-webkit-user-select: none`、`-webkit-touch-callout: none`、
+  `touch-action: none` 規則，套用於 `<canvas>`、搖桿、射擊鍵。
+- HUD overlay（倒數、排行榜、觀戰列）共用同一組規則，避免多點觸控下意外
+  反白。
 
-    1. **管理員輸入 lag 修正（重大）。** Admin Panel 的輸入框被 20 Hz 的
-       state ref 透過 250 ms tick 一直 re-render，導致每打一個字都會被
-       拉回伺服器最後一次廣播的值。改寫為 memoised 的 `<NumSetting>`
-       元件：自管 local `value`，只在使用者**沒** focus 時才從伺服器
-       同步；失焦或按 Enter 才送伺服器，不會每打一個字就送一次。
-       `<PasswordChangeRow>` 與 `<TimerSetTextRow>` 也比照辦理。
-    2. **QR Code 網址修正。** 大廳原本用 `/api/lan-info` 回傳的 LAN IP
-       做 QR — 這個值在生產環境（沒有 Vite dev server）毫無意義。
-       現在主機名不是 loopback 時，QR 直接使用
-       `window.location.origin`，手機掃 `gun.piyou.me` 立即得到正確
-       URL；`value` 也會同步 fallback 到 `window.location.origin`，
-       不再出現「偵測中…」的閃爍。
-    3. **MkDocs 路由。** FastAPI 內建 docs 改掛在 `/api-docs` 與
-       `/api-redoc`（`swagger_ui_oauth2_redirect_url` 也改到
-       `/api-docs/oauth2-redirect`）。MkDocs 透過
-       `StaticFiles(html=True)` 掛在 `/docs`；SPA catch-all 明確跳過
-       `/docs`、`/api-docs`、`/api-redoc`。Dockerfile 新增第三 stage：
-       用 `mkdocs-material 9.*` 跑 `mkdocs build --strict`，
-       並把 `docs/site` 複製進 runtime image。
-    4. **六種武器庫。** `models/weapon.py` 拆出六個獨立子類：
-       `Pistol`、`Rifle`（突擊步槍）、`Shotgun`、`Sniper`、
-       `SMG`、`RocketLauncher`，
-       傷害／射速／彈速／TTL 各自不同；
-       `RocketLauncher` 另外聲明 14×14 加大 hitbox，
-       只在非預設時透過 `bw`/`bh` 走線。
-       `models/__init__.py` 匯出 `ALL_WEAPON_IDS` 供跨模組共用。
-    5. **武器白名單 + 比賽中強制改派。**
-       `GameSettings.allowed_weapons`（CSV）在
-       `add_player()`、`set_weapon()`、`request_respawn()` 都會驗證；
-       管理員調整白名單後，`_sync_allowed_weapons()` 立刻遍歷所有
-       存活玩家，把持「剛被禁掉武器」者隨機改派到還允許的武器，
-       **無須重生**。空清單會保底還原成全開，避免大廳卡死。
-    6. **大廳武器選單即時反應。** 新增 `/api/settings` 端點，
-       回傳 (`allowed_weapons`、`all_weapons`)。大廳每 3 秒輪詢、
-       渲染六張武器卡，被禁的卡片變灰；玩家的選擇若在輪詢間被禁，
-       自動切到第一個還允許的武器。
-    7. **管理員武器啟用清單 UI。** Admin Panel 多了 **WEAPON ARSENAL**
-       checklist，會送 `admin_set allowed_weapons`；UI 不允許清單
-       變空（雖然引擎也會保底，但前端先擋住更省事）。
-    8. **雙語遊戲機制文件更新。** `docs/gameplay_mechanics.md` 新增
-       「六種武器與比賽中即時覆寫」章節，附完整數值表、覆寫邏輯
-       pseudocode、與大廳即時反應說明。
+---
 
-    ### 關鍵決策
+## [Phase 12] — Routing, Toggle Sync, Stress-Test Cleanup · 路由、Toggle 同步、壓力測試清理
 
-    - **focus-aware 的 local input state。** 在 20 Hz 高頻 state 下能撐住
-      最簡單的解 — 不用 debounce、不用手寫 diff、不用 React.memo 比較
-      函式。使用者 focus 時以前端為準，blur 後伺服器才接手。
-    - **用 CSV，不用陣列。** `leaderboard_columns` 已經用 CSV，
-      `admin_set` 也已支援字串往返。沿用同模式可以完全不動 admin 協定層。
-    - **伺服器是最終把關。** 玩家武器的四個出入口
-      （`add_player`、`set_weapon`、`request_respawn`、
-      `_sync_allowed_weapons`）都會比對白名單。前端武器選單純粹 UX。
-    - **/api/settings 而不是 WS。** 大廳玩家還沒開 WebSocket，
-      3 秒一次的 tiny JSON polling 比為了一個 CSV 欄位就拉一條臨時 WS
-      划算得多。
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** Replace the silent SPA fallback with a deliberate cyberpunk
+404 page; fix admin toggle flicker; remove the obsolete stress-test code
+path.
+
+**Added**
+
+- React Router v6 (`<BrowserRouter>` + `<NotFound />`) for deterministic deep
+  linking.
+- Cyberpunk 404 page (`components/NotFound.jsx`) with **Return to Lobby** and
+  **Operator Manual** CTAs.
+- `bot_max_attack_limit` admin field — caps the number of bots that may
+  simultaneously focus-fire on the same human player. Default `2`,
+  `0` = unlimited.
+
+**Changed**
+
+- All admin toggles (Weapons / Leaderboard columns / Team Mode / Bots
+  Enabled) now use **optimistic-with-confirmation**: writes a pending value
+  to a local override the moment the click happens, clears it as soon as the
+  next snapshot confirms. No more sub-second flicker.
+- `engine.admin_set` calls `setattr(...)` **before** any sync helpers so the
+  next 30 Hz tick already carries the new value.
+- Reserved-prefix list (`api/`, `api-docs`, `api-redoc`, `ws`, `health`,
+  `docs`, `assets`) returns hard `404` instead of falling through to
+  `index.html`.
+
+**Removed**
+
+- `engine.stress_test_start`, `_stress_test_cleanup`, the
+  `admin_stress_test` WebSocket handler, and the corresponding Admin Panel
+  section. Use `admin_kick_bots` for ad-hoc cleanup.
+
+### [繁體中文版]
+
+**重點。** 用刻意設計的賽博龐克 404 頁面取代沉默的 SPA fallback；修正
+管理員 toggle 閃爍；移除過時的壓力測試程式碼。
+
+**新增**
+
+- React Router v6（`<BrowserRouter>` + `<NotFound />`），讓深層連結行為可
+  預測。
+- 賽博龐克 404 頁面（`components/NotFound.jsx`），提供「返回大廳」與「操作
+  手冊」兩個 CTA。
+- `bot_max_attack_limit` 管理員欄位 — 限制可同時鎖定同一名玩家的 Bot 數量。
+  預設 `2`，設 `0` 代表不限。
+
+**變更**
+
+- 所有管理員 toggle（Weapons / Leaderboard 欄位 / Team Mode / Bots Enabled）
+  改採**樂觀更新 + 確認後清除**：點擊瞬間寫入本地 pending override，下一個
+  snapshot 確認後即清除。再也沒有亞秒級閃爍。
+- `engine.admin_set` 一律先 `setattr(...)` 再跑 sync helper，下一個 30 Hz
+  tick 必定帶上新值。
+- 保留前綴清單（`api/`、`api-docs`、`api-redoc`、`ws`、`health`、`docs`、
+  `assets`）回硬 `404`，不再 fallback 到 `index.html`。
+
+**移除**
+
+- `engine.stress_test_start`、`_stress_test_cleanup`、`admin_stress_test`
+  WebSocket handler，以及前端管理員面板對應區塊。如需臨時清除 Bot，請改用
+  `admin_kick_bots`。
+
+---
+
+## [Phase 10–11] — Six-Weapon Arsenal & Mid-Match Override · 六種武器與比賽中強制改派
+
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** Expand the arsenal from 3 to 6 distinct weapons with an
+admin-controlled whitelist; reroll players' weapons on-the-fly when the admin
+disables their current pick.
+
+**Added**
+
+- Six weapons: `pistol`, `rifle`, `shotgun` (6-pellet 14° cone), `sniper`,
+  `smg`, `rocket` (oversized 14×14 hitbox transmitted on the wire).
+- `GameSettings.allowed_weapons` CSV whitelist + Command Center toggles.
+- `_sync_allowed_weapons()` walks alive players each settings change and
+  force-reassigns anyone holding a now-disabled weapon.
+- Lobby polls `/api/settings` every 3 s and greys out disabled weapon cards.
+
+**Changed**
+
+- `add_player()`, `set_weapon()`, and `request_respawn()` all enforce the
+  whitelist defensively — the client picker is purely UX.
+- Network snapshot ships `bw` / `bh` only when bullet hitbox ≠ 6×6, keeping
+  the broadcast payload small.
+
+### [繁體中文版]
+
+**重點。** 武器庫從 3 種擴展到 6 種互異武器；新增管理員可控制的白名單；
+管理員停用某把武器時，立即把所有手持該武器的存活玩家強制改派。
+
+**新增**
+
+- 六種武器：`pistol`、`rifle`、`shotgun`（6 顆 14° 扇形彈丸）、`sniper`、
+  `smg`、`rocket`（線上傳輸 14×14 加大 hitbox）。
+- `GameSettings.allowed_weapons` CSV 白名單 + 指揮中心切換 UI。
+- `_sync_allowed_weapons()` 在每次設定變更時遍歷存活玩家，強制改派持有
+  已停用武器者。
+- 大廳每 3 秒輪詢 `/api/settings`，將停用武器卡片變灰。
+
+**變更**
+
+- `add_player()`、`set_weapon()`、`request_respawn()` 三處皆做白名單強制 —
+  前端武器選單純粹是 UX。
+- 網路快照僅在子彈 hitbox ≠ 6×6 時才送 `bw` / `bh`，縮小廣播 payload。
+
+---
+
+## [Phase 9] — Server Simulation: Idle-Pause & Minified Payloads · 閒置暫停與最小化封包
+
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** When zero clients are connected, `engine.step()` is paused so
+the Uvicorn process idles at near-zero CPU. JSON payloads are minified to
+the shortest practical key set.
+
+**Added**
+
+- Idle-pause logic — the 30 Hz tick suspends when both `connections` and
+  `directors` are empty, then resumes on the first `welcome` handshake.
+- Minified JSON keys for the per-tick snapshot (`x`, `y`, `hp`, `w`, `bw`,
+  `bh`, `now`, …) so a 50-player snapshot fits well under 8 KB.
+
+**Changed**
+
+- Initial frontend integration of the minified protocol — `useGameSocket.js`
+  decodes the short keys back into legible field names before storing in
+  `stateRef`.
+
+**Underlying commit / 對應 commit**
+
+| SHA       | Subject                                                                                                  |
+|-----------|----------------------------------------------------------------------------------------------------------|
+| `d76d20a` | feat: implement Phase 9 server simulation with idle-pause logic, minified WebSocket payloads, and initial frontend integration. |
+
+### [繁體中文版]
+
+**重點。** 當沒有任何客戶端連線時，`engine.step()` 會暫停，讓 Uvicorn
+行程閒置時 CPU 幾乎歸零。JSON payload 已最小化至最短實用鍵組。
+
+**新增**
+
+- 閒置暫停邏輯 — 當 `connections` 與 `directors` 同時為空時，30 Hz tick
+  會暫停，下次 `welcome` 握手時恢復。
+- 每個 tick 快照採用最短 JSON 鍵（`x`、`y`、`hp`、`w`、`bw`、`bh`、`now`
+  …），50 名玩家的快照可控制在 8 KB 以內。
+
+**變更**
+
+- 前端整合最小化通訊協定 — `useGameSocket.js` 在寫入 `stateRef` 前先把短鍵
+  解回可讀欄位名稱。
+
+---
+
+## [Phase 6–8] — Multi-View Architecture · 多視角架構
+
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** Three distinct front-end roles — Player, Admin, Director —
+multiplexed onto the single `/ws` endpoint. Hidden admin entry; read-only
+director god view; runtime weapon settings sync.
+
+**Added**
+
+- `?role=director` URL flag → `<DirectorCanvas>` component (drag-pan,
+  wheel-zoom, full god view, no input rights).
+- `<AdminPanel>` dashboard inside the player canvas, gated by the 5-click
+  hidden trigger on the lobby logo (≥ 5 clicks within 1.5 s).
+- `join_admin` and `join_director` WebSocket handshakes — the first message
+  determines the actor's role for the session.
+- Dynamic weapon settings sync: changes to `allowed_weapons` propagate to
+  every connected lobby and in-game UI within one polling cycle.
+
+**Underlying commit / 對應 commit**
+
+| SHA       | Subject                                                                                          |
+|-----------|--------------------------------------------------------------------------------------------------|
+| `e8b02cd` | feat: implement multi-view architecture with admin panel, director mode, and dynamic weapon settings sync |
+
+### [繁體中文版]
+
+**重點。** 前端三種角色 — Player、Admin、Director — 多路複用至同一支
+`/ws`。隱藏管理員觸發、唯讀導播上帝視角、執行期武器設定同步。
+
+**新增**
+
+- `?role=director` URL flag → `<DirectorCanvas>` 元件（拖曳平移、滾輪縮放、
+  完整上帝視角、無輸入權）。
+- 玩家畫布內的 `<AdminPanel>` 儀表板，由大廳 logo 的 5 連點隱藏觸發開啟
+  （1.5 秒內 ≥ 5 次點擊）。
+- `join_admin` 與 `join_director` WebSocket 握手 — 連線後首則訊息決定該
+  session 的角色。
+- 動態武器設定同步：`allowed_weapons` 變更後一個輪詢週期內傳達至所有大廳
+  與遊戲 UI。
+
+---
+
+## [Phase 1–5] — Core Engine & Frontend Scaffolding · 核心引擎與前端骨幹
+
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** Authoritative 30 Hz `GameEngine`, OOP `GameObject` /
+`Player` / `Bullet` / `Weapon` hierarchy, AABB collisions, React 18 + Vite
+canvas client, esports-themed CSS variables, and a documentation site
+served from the same Uvicorn process.
+
+**Added — backend**
+
+- `GameEngine` running at fixed 30 Hz with `step(dt, now)` / `broadcast()`
+  separation.
+- `GameObject` base class with polymorphic `update()`; `Player`, `Bullet`,
+  `Weapon` subclasses; AABB hit resolution in `_resolve_bullet_hits()`.
+- `GameSettings` dataclass exposing all admin-tunable knobs in one place.
+- Static MkDocs site mounted at `/docs`; FastAPI Swagger at `/api-docs`,
+  ReDoc at `/api-redoc`.
+
+**Added — frontend**
+
+- React 18 + Vite SPA; `<GameCanvas>` rendering at the monitor refresh rate
+  via `requestAnimationFrame`, reading from `stateRef` (a `useRef`, NOT
+  `useState`, to avoid render storms).
+- `useGameSocket.js` custom hook — single source of WebSocket lifecycle,
+  reconnect logic, and snapshot decoding.
+- Esports-themed CSS variable palette (`theme.css`) and a kit of utility
+  components (panels, buttons, HUD chrome).
+
+**Underlying commits / 對應 commits**
+
+| SHA       | Subject                                                                                          |
+|-----------|--------------------------------------------------------------------------------------------------|
+| `cf6d9f6` | feat: add static documentation site support and initialize backend server structure              |
+| `1caf3f8` | feat: initialize backend engine, frontend scaffolding, and documentation structure               |
+| `8402de5` | feat: implement core game engine, administrative management, and frontend infrastructure for Battle Royale simulation |
+
+### [繁體中文版]
+
+**重點。** 權威 30 Hz `GameEngine`、OOP `GameObject` / `Player` / `Bullet`
+/ `Weapon` 繼承樹、AABB 碰撞、React 18 + Vite Canvas 客戶端、電競風 CSS
+變數，以及由同一支 Uvicorn 提供的文件站。
+
+**新增 — 後端**
+
+- 固定 30 Hz 的 `GameEngine`，明確切分 `step(dt, now)` 與 `broadcast()`。
+- `GameObject` 基底類別搭配多型 `update()`；`Player`、`Bullet`、`Weapon`
+  子類別；`_resolve_bullet_hits()` 處理 AABB 命中判定。
+- `GameSettings` dataclass，把所有管理員可調參數集中在一處。
+- `/docs` 掛載靜態 MkDocs 站台；`/api-docs` 提供 FastAPI Swagger，
+  `/api-redoc` 提供 ReDoc。
+
+**新增 — 前端**
+
+- React 18 + Vite SPA；`<GameCanvas>` 透過 `requestAnimationFrame` 依螢幕
+  更新率作畫，從 `stateRef`（`useRef`，**非** `useState`，避免 render
+  風暴）讀取狀態。
+- `useGameSocket.js` 自訂 hook — WebSocket 生命週期、重連邏輯、快照解碼的
+  唯一來源。
+- 電競風 CSS 變數調色盤（`theme.css`）與一組工具元件（面板、按鈕、HUD
+  chrome）。
+
+---
+
+## [Phase 0] — Bootstrap & Railway Deployment · 啟動與 Railway 部署
+
+> **Date / 日期:** 2026-05-07
+
+### [English Version]
+
+**Highlight.** Repo skeleton, multi-stage Dockerfile, and a clean
+`.gitignore` so the first push to Railway is reproducible from a fresh
+clone.
+
+**Added**
+
+- Multi-stage `Dockerfile`: Stage 1 builds the Vite bundle, Stage 2 runs
+  `mkdocs build` (verifies `index.html` exists), Stage 3 is the slim
+  runtime that copies both bundles in.
+- `.gitignore` excluding build artifacts (`dist/`, `site/`),
+  dependencies (`node_modules/`, `__pycache__/`), and environment files
+  (`.env`).
+
+**Underlying commits / 對應 commits**
+
+| SHA       | Subject                                                                                          |
+|-----------|--------------------------------------------------------------------------------------------------|
+| `f341fc8` | chore: add .gitignore to exclude build artifacts, dependencies, and environment variables        |
+| `f6beb19` | Initial commit: Ready for Railway deployment                                                     |
+
+### [繁體中文版]
+
+**重點。** Repo 骨架、多階段 Dockerfile、乾淨的 `.gitignore`，確保第一次
+push 到 Railway 即可從乾淨 clone 重現。
+
+**新增**
+
+- 多階段 `Dockerfile`：Stage 1 build Vite bundle、Stage 2 跑
+  `mkdocs build`（並驗證 `index.html` 存在）、Stage 3 為精簡 runtime，
+  把兩個 bundle 複製進去。
+- `.gitignore` 排除 build 產物（`dist/`、`site/`）、相依套件
+  （`node_modules/`、`__pycache__/`）、環境檔（`.env`）。
+
+---
+
+## Cross-Reference Table · 對照表
+
+### [English Version]
+
+| Phase    | Theme                                  | Headline file(s)                                            |
+|----------|----------------------------------------|-------------------------------------------------------------|
+| 13       | Mobile UX hardening                    | `frontend/src/theme.css`                                    |
+| 12       | Routing + Toggle sync + Stress cleanup | `frontend/src/components/NotFound.jsx`, `backend/engine.py` |
+| 10–11    | Six-weapon arsenal                     | `backend/models/weapons.py`, `backend/engine.py`            |
+| 9        | Idle-pause + minified payloads         | `backend/engine.py`, `frontend/src/hooks/useGameSocket.js`  |
+| 6–8      | Multi-view architecture                | `frontend/src/App.jsx`, `frontend/src/DirectorCanvas.jsx`   |
+| 1–5      | Core engine + scaffolding              | `backend/engine.py`, `backend/models/`, `frontend/src/`     |
+| 0        | Bootstrap                              | `Dockerfile`, `.gitignore`                                  |
+
+### [繁體中文版]
+
+| 階段     | 主題                                   | 對應主要檔案                                                |
+|----------|----------------------------------------|-------------------------------------------------------------|
+| 13       | 行動裝置 UX 強化                       | `frontend/src/theme.css`                                    |
+| 12       | 路由 + Toggle 同步 + 壓力測試清理      | `frontend/src/components/NotFound.jsx`、`backend/engine.py` |
+| 10–11    | 六種武器庫                             | `backend/models/weapons.py`、`backend/engine.py`            |
+| 9        | 閒置暫停 + 最小化封包                  | `backend/engine.py`、`frontend/src/hooks/useGameSocket.js`  |
+| 6–8      | 多視角架構                             | `frontend/src/App.jsx`、`frontend/src/DirectorCanvas.jsx`   |
+| 1–5      | 核心引擎 + 骨幹                        | `backend/engine.py`、`backend/models/`、`frontend/src/`     |
+| 0        | 啟動                                   | `Dockerfile`、`.gitignore`                                  |

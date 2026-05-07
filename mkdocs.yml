@@ -1,34 +1,99 @@
 site_name: Battle Royale Docs
 site_description: 2D top-down multiplayer battle royale built with FastAPI + React 18.
 docs_dir: docs
+
 theme:
   name: material
+  language: en
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
     - content.code.copy
-    - toc.integrate
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - search.share
   palette:
-    - scheme: slate
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
       primary: indigo
       accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
   - toc:
       permalink: true
-  - pymdownx.superfences
+      toc_depth: 3
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.caret
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/
+
 nav:
-  - Overview: index.md
-  - Setup: setup.md
-  - Gameplay Mechanics: gameplay_mechanics.md
-  - Routing Guide: routing_guide.md
-  - Development Log: development_log.md
-  - Modification Guide: modification_guide.md
-  - UI Components: ui_components.md
-  - Mobile Controls: mobile_controls.md
-  - Advanced Systems: advanced_systems.md
-  - Deployment Guide: deployment_guide.md
-  - Design Log (raw): design_log.md
+  - 專案概觀 · Overview:
+      - index.md
+  - 🚀 快速開始 · Getting Started:
+      - 環境建置 · Setup: setup.md
+      - 部署指南 · Deployment Guide: deployment_guide.md
+  - 🎮 遊戲指南 · Game Manual:
+      - 遊戲機制 · Gameplay Mechanics: gameplay_mechanics.md
+      - 介面元件 · UI Components: ui_components.md
+      - 行動裝置控制 · Mobile Controls: mobile_controls.md
+  - 🛠️ 技術架構 · Technical Deep Dive:
+      - 進階系統 · Advanced Systems: advanced_systems.md
+      - 路由指南 · Routing Guide: routing_guide.md
+      - 修改指南 · Modification Guide: modification_guide.md
+  - 📜 開發歷程 · History:
+      - 設計筆記 · Design Log: design_log.md
+      - 開發紀錄 · Development Log: development_log.md
