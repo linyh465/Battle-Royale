@@ -1,0 +1,20 @@
+# Node & React
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+
+# Python & FastAPI
+backend/__pycache__/
+backend/venv/
+backend/env/
+backend/.env
+*.pyc
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Deployment
+.railway/
+Railwayfile
+
