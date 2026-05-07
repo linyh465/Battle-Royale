@@ -18,3 +18,5 @@ Thumbs.db
 .railway/
 Railwayfile
 
+.claude
+claude.json

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from engine import GameEngine
@@ -400,6 +400,12 @@ def _resolve_mkdocs_site() -> Path | None:
 #     `mkdocs build`，container log 會明確警告，而非 /docs 安靜 404。
 _mkdocs_site = _resolve_mkdocs_site()
 if _mkdocs_site is not None:
+    # EN: Explicit redirect for exact path /docs to /docs/ to avoid 404
+    # zh-TW: 明確將確切的 /docs 重新導向至 /docs/，避免因 SPA fallback 導致 404
+    @app.get("/docs", include_in_schema=False)
+    async def docs_redirect():
+        return RedirectResponse(url="/docs/")
+
     app.mount(
         "/docs",
         StaticFiles(directory=str(_mkdocs_site), html=True),
