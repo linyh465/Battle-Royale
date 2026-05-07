@@ -90,13 +90,13 @@ const CONTENT = {
     ],
   },
   "zh-TW": {
-    title: "競技場 · 操作手冊",
+    title: "競技場 · 餘燼協定 操作手冊",
     subtitle: "Phase 15 版本 — 雙搖桿控制、賽後沙盒對戰",
     sections: [
       {
         heading: "01 / 遊戲概述",
         body: [
-          "本作是「持續餘燼」型競技場：世界為單一 2560×1440 網格，沒有縮圈機制。比賽時長由管理員設定（預設無限時）。當倒數歸零，遊戲會切換到「賽後 · 沙盒對戰」狀態 — 排行榜立刻凍結，但戰鬥仍持續，玩家可繼續練槍。",
+          "本專案是以大逃殺為基底的競技場遊戲：世界為單一 2560×1440 網格，沒有縮圈機制。比賽時長由管理員設定（預設無限時）。當倒數歸零，遊戲會切換到「賽後 · 沙盒對戰」狀態 — 排行榜立刻凍結，但戰鬥仍持續，玩家可繼續遊玩。",
         ],
       },
       {
@@ -180,8 +180,8 @@ export default function Docs() {
     <div style={{
       minHeight: "100vh",
       background: "radial-gradient(circle at 30% 0%, rgba(34,211,238,0.08), transparent 55%)," +
-                  "radial-gradient(circle at 80% 100%, rgba(255,59,92,0.08), transparent 55%)," +
-                  "#03070d",
+        "radial-gradient(circle at 80% 100%, rgba(255,59,92,0.08), transparent 55%)," +
+        "#03070d",
       color: "#d8e6ff",
       fontFamily: "var(--br-font, system-ui, sans-serif)",
       position: "relative",
