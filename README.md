@@ -1,4 +1,4 @@
-# 🎮 Battle Royale: Continuous Deathmatch
+# 🎮 Battle Royale: Ember Deathmatch
 
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -124,6 +124,3 @@ The project includes two forms of documentation:
 
 ## 📜 License
 This project is licensed under the MIT License. See the LICENSE file for details.
-
----
-*Developed with ❤️ by the Antigravity Team.*
