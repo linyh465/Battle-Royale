@@ -124,6 +124,3 @@ docker run -p 8000:8000 battle-royale
 
 ## 📜 授權協議
 本專案採用 MIT 授權協議。詳情請參閱 LICENSE 檔案。
-
----
-*Developed with ❤️ by the Antigravity Team.*
