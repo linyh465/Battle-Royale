@@ -1,4 +1,4 @@
-# 🎮 Battle Royale: 持續大亂鬥 (Continuous Deathmatch)
+# 🎮 Battle Royale: 競技場 ● 餘燼協定
 
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
