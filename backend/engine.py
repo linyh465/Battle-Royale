@@ -80,7 +80,11 @@ DEFAULT_ALLOWED_WEAPONS = ",".join(ALL_WEAPON_IDS)
 @dataclass
 class GameSettings:
     admin_password: str = "0909"
-    team_mode: bool = False
+    # EN: Phase 20 — `team_mode` removed. Teams feature has been fully scrubbed
+    #     from the project (model, engine, broadcast, admin UI). Free-for-all
+    #     deathmatch is the only supported mode going forward.
+    # zh-TW: Phase 20 — 已移除 `team_mode`。隊伍功能已從模型、引擎、廣播、
+    #     管理員 UI 全面清除，未來僅支援自由混戰模式。
     leaderboard_sort_by: str = "kills"
     base_respawn_time: float = 5.0
     respawn_penalty: float = 3.0
@@ -220,19 +224,19 @@ class GameEngine:
             cls = WEAPON_REGISTRY.get(self._pick_random_allowed_weapon())
             if cls:
                 p.weapon = cls()
-        if self.settings.team_mode:
-            p.team = self._next_team_assignment()
+        # EN: Phase 20 — team assignment removed; players join free-for-all.
+        # zh-TW: Phase 20 — 移除隊伍分派；玩家一律加入自由混戰。
         self.players[p.id] = p
         self.connections[p.id] = ws
         self.devices[p.id] = DeviceInfo(ip=ip or "", user_agent=user_agent or "")
         self._wake_loop()
-        if self.settings.team_mode:
-            self._balance_with_bots()
         return p
 
-    def add_bot(self, team: str = "") -> BotPlayer:
+    def add_bot(self) -> BotPlayer:
+        # EN: Phase 20 — bot spawn no longer accepts a team argument.
+        # zh-TW: Phase 20 — bot 產生函式不再接收 team 參數。
         x, y = self._spawn_position()
-        bot = BotPlayer(name="", x=x, y=y, team=team)
+        bot = BotPlayer(name="", x=x, y=y)
         bot.max_hp = self.settings.default_bot_hp
         bot.hp = bot.max_hp
         self.players[bot.id] = bot
@@ -247,8 +251,6 @@ class GameEngine:
         self.devices.pop(pid, None)
         if self.bullets:
             self.bullets = [b for b in self.bullets if b.owner_id != pid]
-        if self.settings.team_mode:
-            self._balance_with_bots()
 
     def remove_admin(self, admin_id: str) -> None:
         self.admin_ws.pop(admin_id, None)
@@ -361,14 +363,16 @@ class GameEngine:
         self._kill(p, None, now)
 
     def admin_reset_match(self) -> None:
-        # EN: Phase 15 — Reset Match returns the world to a fully fresh
-        #     PLAYING state. Wipes EVERY per-player counter (kills/deaths/
-        #     damage), clears the frozen leaderboard, restores HP, and
-        #     respawns every player. Equivalent to "new lobby" without the
-        #     reconnect overhead.
-        # zh-TW: Phase 15 — 重置對戰 = 把世界完全重置為新鮮的 PLAYING 狀態。
-        #     清空每位玩家的計數（擊殺/死亡/傷害）、清掉凍結排行榜、回滿血、
-        #     強制全員重生。等同「全新大廳」但不需要重連。
+        # EN: Phase 20 — Bug 3 fix. The "Reset Match" transition (POST_GAME →
+        #     PLAYING) MUST explicitly iterate every player and clear their
+        #     match stats: kills, deaths, damage_dealt, damage_taken, and
+        #     restore hp to max_hp. Previously some clients reported stale
+        #     stats lingering after reset; the loop below is now the single
+        #     source of truth and is unconditional.
+        # zh-TW: Phase 20 — Bug 3 修正。「重置對戰」(POST_GAME → PLAYING) 切換
+        #     時必須顯式遍歷每位玩家，清空 kills / deaths / damage_dealt /
+        #     damage_taken，並把 hp 回滿至 max_hp。先前部分客戶端在重置後
+        #     仍看到舊的統計數值；此迴圈現為唯一的權威來源，無條件執行。
         self.reset_seq += 1
         self.game_over = False
         self.match_state = MATCH_PLAYING
@@ -378,6 +382,10 @@ class GameEngine:
             self.game_end_time = time.perf_counter() + self.settings.game_duration
         else:
             self.game_end_time = 0.0
+        # EN: Iterate every player — bots included — and zero every match
+        #     counter. respawn() additionally restores hp to max_hp.
+        # zh-TW: 遍歷所有玩家（含 bot），歸零每一個對戰計數器；
+        #     respawn() 還會把 hp 補滿至 max_hp。
         for p in self.players.values():
             p.kills = 0
             p.deaths = 0
@@ -387,6 +395,7 @@ class GameEngine:
             p.killed_by_weapon = ""
             x, y = self._spawn_position()
             p.max_hp = self.settings.default_bot_hp if p.is_bot else self.settings.default_player_hp
+            p.hp = p.max_hp  # EN: explicit per Bug 3 spec / zh-TW: 依 Bug 3 規格明確設定
             p.respawn(x, y)
 
     def admin_kick_bots(self) -> None:
@@ -477,38 +486,12 @@ class GameEngine:
         except (TypeError, ValueError):
             return
         setattr(self.settings, key, value)
-        if key == "team_mode":
-            self._sync_team_mode()
-        elif key in ("bots_enabled", "bot_count"):
+        # EN: Phase 20 — `team_mode` branch removed. Teams feature is gone.
+        # zh-TW: Phase 20 — 移除 `team_mode` 分支；隊伍功能已不存在。
+        if key in ("bots_enabled", "bot_count"):
             self._sync_standalone_bots()
         elif key == "allowed_weapons":
             self._sync_allowed_weapons()
-
-    def _sync_team_mode(self) -> None:
-        if self.settings.team_mode:
-            for p in list(self.players.values()):
-                if not p.is_bot and not p.team:
-                    p.team = self._next_team_assignment()
-            self._balance_with_bots()
-        else:
-            for pid, p in list(self.players.items()):
-                if p.is_bot:
-                    self.players.pop(pid, None)
-                else:
-                    p.team = ""
-
-    def _next_team_assignment(self) -> str:
-        red = sum(1 for p in self.players.values() if p.team == "red")
-        blue = sum(1 for p in self.players.values() if p.team == "blue")
-        return "red" if red <= blue else "blue"
-
-    def _balance_with_bots(self) -> None:
-        red = sum(1 for p in self.players.values() if p.team == "red")
-        blue = sum(1 for p in self.players.values() if p.team == "blue")
-        while red < blue:
-            self.add_bot(team="red"); red += 1
-        while blue < red:
-            self.add_bot(team="blue"); blue += 1
 
     # ──────────── Match state transitions / 對戰狀態切換 ────────────
     def _enter_post_game(self) -> None:
@@ -531,7 +514,8 @@ class GameEngine:
                 "damage_dealt": round(p.damage_dealt, 1),
                 "damage_taken": round(p.damage_taken, 1),
                 "is_bot": p.is_bot,
-                "team": p.team,
+                # EN: Phase 20 — team field removed.
+                # zh-TW: Phase 20 — 已移除 team 欄位。
                 "weapon": p.weapon.name,
             }
             for p in self.players.values()
@@ -670,9 +654,10 @@ class GameEngine:
             for p in self.players.values():
                 if p.state != STATE_ALIVE or p.id == b.owner_id:
                     continue
-                if (self.settings.team_mode and owner and owner.team
-                        and owner.team == p.team):
-                    continue
+                # EN: Phase 20 — friendly-fire team filter removed with the
+                #     Teams feature; every alive non-owner is a valid target.
+                # zh-TW: Phase 20 — 隨著隊伍功能移除，友軍火力過濾亦同步移除；
+                #     任何存活的非射手玩家都是合法目標。
                 # Inflate target AABB by the bullet's radius so a bullet
                 # that grazes the edge of the player still counts as a hit.
                 # This matches the pre-Phase-15 AABB-vs-AABB feel exactly.
@@ -732,7 +717,8 @@ class GameEngine:
             "s": p.state,
             "ra": p.respawn_at,
             "b": 1 if p.is_bot else 0,
-            "tm": p.team,
+            # EN: Phase 20 — `tm` (team) wire key removed.
+            # zh-TW: Phase 20 — 移除 `tm`（team）線上鍵。
             "kn": p.killed_by_name,
             "kw": p.killed_by_weapon,
             "al": 1 if p.alive else 0,
@@ -775,7 +761,8 @@ class GameEngine:
             "n": now,
             "wo": {"w": self.world_w, "h": self.world_h},
             "st": {
-                "team_mode": self.settings.team_mode,
+                # EN: Phase 20 — `team_mode` removed from broadcast settings.
+                # zh-TW: Phase 20 — 已從廣播設定中移除 `team_mode`。
                 "leaderboard_sort_by": self.settings.leaderboard_sort_by,
                 "base_respawn_time": self.settings.base_respawn_time,
                 "respawn_penalty": self.settings.respawn_penalty,
@@ -853,29 +840,64 @@ class GameEngine:
             self.remove_admin(aid)
 
     async def run(self) -> None:
+        # EN: Phase 20 — Bug 2 fix. Each tick of the simulation is now wrapped
+        #     in a broad try/except so a single faulty player input, snapshot
+        #     serialisation glitch, or transient OS error CANNOT silently kill
+        #     the engine loop and freeze every connected client on
+        #     "Status: Open" with a blank screen. We log the exception (so the
+        #     incident remains debuggable) and IMMEDIATELY `continue` to the
+        #     next iteration; the server keeps ticking, broadcasting, and
+        #     accepting input no matter what.
+        #     `CancelledError` is re-raised untouched so the FastAPI lifespan
+        #     teardown still works exactly as before.
+        # zh-TW: Phase 20 — Bug 2 修正。模擬迴圈的每個 tick 改用大範圍 try/except
+        #     包覆，避免任何單一錯誤（玩家異常輸入、快照序列化問題、暫時性
+        #     OS 例外）靜默殺掉整個引擎迴圈，導致所有客戶端停在「Status: Open」
+        #     的白畫面。錯誤會被 log 起來（保留除錯資訊），然後立即 `continue`
+        #     進入下一輪 tick；伺服器無論如何都會繼續跑、繼續廣播、繼續收輸入。
+        #     `CancelledError` 仍然原樣往外拋，FastAPI lifespan 關閉流程不受影響。
         self._running = True
         if self._wake is None:
             self._wake = asyncio.Event()
         last = time.perf_counter()
         while self._running:
-            if not self.players:
-                if self.bullets:
-                    self.bullets = []
-                self._wake.clear()
+            try:
+                if not self.players:
+                    if self.bullets:
+                        self.bullets = []
+                    self._wake.clear()
+                    try:
+                        await self._wake.wait()
+                    except asyncio.CancelledError:
+                        raise
+                    last = time.perf_counter()
+                    continue
+
+                now = time.perf_counter()
+                dt = now - last
+                last = now
+                self.step(dt, now)
+                await self.broadcast()
+                elapsed = time.perf_counter() - now
+                await asyncio.sleep(max(0.0, TICK_DT - elapsed))
+            except asyncio.CancelledError:
+                # EN: Propagate — the FastAPI lifespan needs this to shut down.
+                # zh-TW: 直接往外拋；FastAPI lifespan 需要這個例外才能結束。
+                raise
+            except Exception as e:  # noqa: BLE001
+                # EN: Log and keep ticking. NEVER let one bad tick hang the server.
+                # zh-TW: 記錄錯誤後繼續下一個 tick；絕不讓單一錯誤的 tick 凍結伺服器。
+                print(f"[engine.run tick error] {type(e).__name__}: {e}", flush=True)
+                # EN: Reset `last` so the next dt is sane after we recover.
+                # zh-TW: 重置 `last`，避免恢復後第一個 dt 異常巨大。
+                last = time.perf_counter()
+                # EN: Brief sleep so a pathological repeating error doesn't busy-spin.
+                # zh-TW: 短暫休眠，避免病態重複錯誤把 CPU 拉爆。
                 try:
-                    await self._wake.wait()
+                    await asyncio.sleep(TICK_DT)
                 except asyncio.CancelledError:
                     raise
-                last = time.perf_counter()
                 continue
-
-            now = time.perf_counter()
-            dt = now - last
-            last = now
-            self.step(dt, now)
-            await self.broadcast()
-            elapsed = time.perf_counter() - now
-            await asyncio.sleep(max(0.0, TICK_DT - elapsed))
 
     def stop(self) -> None:
         self._running = False

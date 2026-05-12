@@ -20,3 +20,7 @@ Railwayfile
 
 .claude
 claude.json
+
+# Phase 20 — Claude memory / version controller (never commit)
+# Phase 20 — Claude 記憶區 / 版本控制器（請勿提交）
+claude.md

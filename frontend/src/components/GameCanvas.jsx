@@ -6,12 +6,32 @@ import DeathScreen from "./DeathScreen.jsx";
 
 const INPUT_HZ = 30;
 const INPUT_DT = 1000 / INPUT_HZ;
-// EN: Phase 17 — minimap now uses a 16:9 rectangle (160×90) matching the
-//     world aspect ratio (2560×1440) for distortion-free rendering.
-// zh-TW: Phase 17 — 小地圖改用 16:9 矩形（160×90），與世界地圖比例（2560×1440）
-//     一致，避免變形。
-const MINIMAP_W = 160;
-const MINIMAP_H = 90;
+
+// EN: Phase 20 — responsive HUD / minimap scale. Mobile keeps the existing
+//     compact 0.5× sizing so finger-sized UI stays out of the action; desktop
+//     (>=768 px viewport) scales to 1.0× so HUD and minimap are readable on a
+//     1440p monitor. The scale helper is evaluated each frame inside the
+//     render loop, so a resize from portrait-phone to landscape-tablet snaps
+//     to the correct size without reloading.
+// zh-TW: Phase 20 — 響應式 HUD / 小地圖縮放。行動裝置維持原本緊湊的 0.5×，
+//     避免大尺寸 UI 擋住操作；桌面（viewport >= 768px）放大到 1.0×，
+//     讓 1440p 顯示器上 HUD 與小地圖清晰易讀。比例每幀重新計算，
+//     從手機直式切換到平板橫式時也會即時對齊。
+const HUD_SCALE_MOBILE = 0.5;
+const HUD_SCALE_DESKTOP = 1.0;
+const DESKTOP_BREAKPOINT = 768;
+const getHudScale = () =>
+  (typeof window !== "undefined" && window.innerWidth >= DESKTOP_BREAKPOINT)
+    ? HUD_SCALE_DESKTOP
+    : HUD_SCALE_MOBILE;
+
+// EN: Phase 17 — minimap is a 16:9 rectangle matching the world aspect ratio
+//     (2560×1440). Phase 20 multiplies these base dimensions by `getHudScale()`
+//     at render time so the minimap grows on desktop and shrinks on mobile.
+// zh-TW: Phase 17 — 小地圖為 16:9 矩形，與世界比例（2560×1440）一致。
+//     Phase 20 在 render 時以 `getHudScale()` 乘上基礎尺寸，桌面放大、手機縮小。
+const MINIMAP_W_BASE = 320;
+const MINIMAP_H_BASE = 180;
 const PAD = 12;
 const THREAT_DOT_THRESHOLD = 0.985;
 const THREAT_RANGE = 760;
@@ -551,11 +571,17 @@ function PauseOverlay({ message, t }) {
 export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
   const { players, activeType, sandboxEnabled } = data;
 
-  // EN: Phase 18 — 4 leaderboard categories. The admin picks which one is
-  //     visible via `active_leaderboard_type`. Each tab maps to a player
-  //     stat key and a display label.
-  // zh-TW: Phase 18 — 4 種排行榜類別。管理員透過 `active_leaderboard_type`
-  //     選擇顯示哪個。每個頁籤對應一個玩家統計鍵與顯示標籤。
+  // EN: Phase 20 — Bug 4 fix. The 4 leaderboard categories used to render
+  //     simultaneously (merged columns), which produced the "broken / merged"
+  //     output players reported. The component now conditionally renders
+  //     ONLY the single array dictated by `GameSettings.active_leaderboard_type`
+  //     (surfaced as `data.activeType`). Any unknown value falls back to
+  //     "kills" so the panel never blanks out on a malformed snapshot.
+  // zh-TW: Phase 20 — Bug 4 修正。先前 4 種排行榜類別會同時渲染（欄位合併在
+  //     一起），即玩家回報的「排行榜壞掉 / 合併」現象。此元件改為依
+  //     `GameSettings.active_leaderboard_type`（透過 `data.activeType` 傳入）
+  //     僅渲染唯一指定的類別陣列。未知值會 fallback 到 "kills"，避免快照異常
+  //     時面板整個空白。
   const categories = [
     { key: "kills",        label: t.lbKills },
     { key: "deaths",       label: t.lbDeaths },
@@ -564,6 +590,10 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
   ];
 
   const current = categories.find(c => c.key === activeType) || categories[0];
+  // EN: Sort and render ONLY the active category. No other category is ever
+  //     surfaced in the rows; the tab strip only labels which one is active.
+  // zh-TW: 僅針對選中類別排序並渲染。其他類別不會出現在表列中，
+  //     上方頁籤僅標示目前是哪個。
   const sorted = [...players].sort((a, b) => (b[current.key] ?? 0) - (a[current.key] ?? 0));
 
   const closeLocked = !sandboxEnabled;
@@ -757,8 +787,11 @@ function drawPlayer(ctx, p, camX, camY, isMe) {
   const cx = x + p.w / 2;
   const cy = y + p.h / 2;
 
-  const teamColor = p.team === "red" ? "#ef4444" : p.team === "blue" ? "#3b82f6" : null;
-  const aliveFill = isMe ? "#22c55e" : (teamColor || "#3b82f6");
+  // EN: Phase 20 — team colour logic removed alongside the Teams feature.
+  //     Every non-local alive player renders blue; the local player is green.
+  // zh-TW: Phase 20 — 隨著隊伍功能移除，team 顏色邏輯一併刪除。
+  //     非本機玩家固定為藍色，本機玩家為綠色。
+  const aliveFill = isMe ? "#22c55e" : "#3b82f6";
   ctx.fillStyle = p.state === "alive" ? aliveFill : "#475569";
   ctx.fillRect(x, y, p.w, p.h);
 
@@ -784,14 +817,19 @@ function drawPlayer(ctx, p, camX, camY, isMe) {
   ctx.textAlign = "start";
 }
 
-// EN: Phase 17 — minimap now renders a 16:9 rectangle (MINIMAP_W × MINIMAP_H)
-//     matching the world’s exact aspect ratio (2560 × 1440). No more square
-//     distortion — the map fits elegantly in the top-left corner.
-// zh-TW: Phase 17 — 小地圖改為 16:9 矩形（MINIMAP_W × MINIMAP_H），與世界
-//     地圖寬高比（2560 × 1440）完美匹配，消除方形變形。
+// EN: Phase 20 — minimap dimensions are now driven by `getHudScale()` so the
+//     same code renders correctly on phones (0.5×) and desktops (1.0×).
+//     Player dot radius is also scaled so individual blips remain legible at
+//     both extremes without becoming pixel-noise on mobile or too-tiny on
+//     desktop.
+// zh-TW: Phase 20 — 小地圖尺寸由 `getHudScale()` 決定，同一份程式即可在
+//     手機（0.5×）與桌面（1.0×）正確顯示。玩家圓點半徑同樣依比例縮放，
+//     兩端都能保持可辨識（不會在手機變成像素噪點，也不會在桌面看起來太小）。
 function drawMinimap(ctx, snap, me) {
+  const scale = getHudScale();
   const x0 = PAD, y0 = PAD;
-  const mw = MINIMAP_W, mh = MINIMAP_H;
+  const mw = MINIMAP_W_BASE * scale;
+  const mh = MINIMAP_H_BASE * scale;
   ctx.save();
   ctx.fillStyle = "rgba(11,15,23,0.78)";
   ctx.fillRect(x0, y0, mw, mh);
@@ -799,30 +837,42 @@ function drawMinimap(ctx, snap, me) {
   ctx.strokeRect(x0 + 0.5, y0 + 0.5, mw - 1, mh - 1);
   const sx = mw / snap.world.w;
   const sy = mh / snap.world.h;
+  // EN: Phase 20 — dot radius follows the HUD scale.
+  // zh-TW: Phase 20 — 圓點半徑跟隨 HUD 比例。
+  const meDotR = Math.max(2, 3 * scale * 2);
+  const otherDotR = Math.max(1.5, 2 * scale * 2);
   for (const p of snap.players ?? []) {
     if (p.state !== "alive") continue;
     const isMe = me && p.id === me.id;
     ctx.beginPath();
     ctx.fillStyle = isMe ? "#22c55e" : "#ef4444";
-    ctx.arc(x0 + (p.x + p.w / 2) * sx, y0 + (p.y + p.h / 2) * sy, isMe ? 3 : 2, 0, Math.PI * 2);
+    ctx.arc(x0 + (p.x + p.w / 2) * sx, y0 + (p.y + p.h / 2) * sy, isMe ? meDotR : otherDotR, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 }
 
-// EN: Phase 17 — top-right HUD, SCALED DOWN ~50%. Compact font, tight spacing.
+// EN: Phase 20 — HUD dimensions scale with `getHudScale()`. Mobile keeps the
+//     compact Phase 17 sizing (0.5×); desktop doubles every dimension so the
+//     panel is comfortably readable on a 1440p screen.
 //     Shows: Player, Alive, Dead, HP, Weapon, + Kills/Deaths (only PLAYING).
-// zh-TW: Phase 17 — 右上 HUD 縮小約 50%。緊湊字型、緊密間距。
-//     顯示：玩家、存活、死亡、HP、武器 + 擊殺/死亡（僅 PLAYING 狀態）。
+// zh-TW: Phase 20 — HUD 尺寸跟隨 `getHudScale()` 縮放。手機維持 Phase 17 緊湊
+//     版（0.5×）；桌面則整體放大一倍，讓 1440p 螢幕也能舒適閱讀。
+//     顯示：玩家、存活、死亡、HP、武器 +（僅 PLAYING 顯示）擊殺/死亡。
 function drawHUD(ctx, snap, me, W, t) {
-  // EN: Phase 17 — check if kills/deaths stats should appear.
-  //     Only show during PLAYING state (not POST_GAME sandbox).
-  // zh-TW: Phase 17 — 檢查是否顯示擊殺/死亡統計。
-  //     僅在 PLAYING 狀態顯示（賽後沙盒不顯示）。
+  const scale = getHudScale();
   const isPlaying = (snap.match_state || "PLAYING") === "PLAYING";
   const rowCount = isPlaying ? 7 : 5;
 
-  const panelW = 150, lh = 13, padV = 6, padH = 8;
+  // EN: Base sizes are the Phase 17 mobile values; scale = 0.5 → mobile,
+  //     scale = 1.0 → desktop doubles every dimension.
+  // zh-TW: 基準值為 Phase 17 行動版；scale = 0.5 → 手機、1.0 → 桌面整體放大。
+  const baseFactor = scale / HUD_SCALE_MOBILE; // 1.0 mobile, 2.0 desktop
+  const panelW = Math.round(150 * baseFactor);
+  const lh = Math.round(13 * baseFactor);
+  const padV = Math.round(6 * baseFactor);
+  const padH = Math.round(8 * baseFactor);
+  const fontPx = Math.max(9, Math.round(9 * baseFactor));
   const panelH = padV * 2 + rowCount * lh;
   const x0 = W - panelW - PAD, y0 = PAD;
 
@@ -835,9 +885,9 @@ function drawHUD(ctx, snap, me, W, t) {
   const aliveCount = snap.players.filter((p) => p.state === "alive").length;
   const awaitingRespawn = snap.players.filter((p) => p.state === "dead").length;
 
-  ctx.font = "9px ui-monospace, monospace";
+  ctx.font = `${fontPx}px ui-monospace, monospace`;
   ctx.textAlign = "start";
-  let row = y0 + padV + 9;
+  let row = y0 + padV + fontPx;
 
   const drawRow = (label, value, valueColor = "#e5e7eb") => {
     ctx.fillStyle = "#91a3c4";
@@ -849,7 +899,9 @@ function drawHUD(ctx, snap, me, W, t) {
     row += lh;
   };
 
-  const myName = me ? `${me.name}${me.team ? ` [${me.team}]` : ""}` : "—";
+  // EN: Phase 20 — `[team]` suffix removed; the Teams feature no longer exists.
+  // zh-TW: Phase 20 — 移除 `[team]` 後綴；隊伍功能已不存在。
+  const myName = me ? me.name : "—";
   const myHp = me ? `${Math.max(0, Math.round(me.hp))}/${Math.round(me.max_hp)}` : "—";
   const weaponId = me?.weapon || "—";
   const weaponLabel = (t[`weapon_${weaponId}`] || weaponId).toString();
@@ -919,7 +971,8 @@ function detectThreats(snap, me) {
   const cx = me.x + me.w / 2, cy = me.y + me.h / 2;
   for (const e of snap.players) {
     if (e.id === me.id || e.state !== "alive") continue;
-    if (snap.settings?.team_mode && e.team && e.team === me.team) continue;
+    // EN: Phase 20 — team-mode threat filter removed.
+    // zh-TW: Phase 20 — 移除 team-mode 威脅過濾。
     const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
     const tx = cx - ex, ty = cy - ey;
     const dist = Math.hypot(tx, ty);

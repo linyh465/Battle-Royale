@@ -48,6 +48,33 @@ export default function AdminPanel({ stateRef, send, onClose }) {
   const [filter, setFilter] = useState("all");
   const [hpAllInput, setHpAllInput] = useState("");
 
+  // EN: Phase 20 — Bug 1 fix. Track whether we've received the first server
+  //     snapshot. Until then, EVERY toggle renders OFF and disabled — we
+  //     refuse to fabricate state from hard-coded defaults. The instant the
+  //     snapshot arrives, `hasSnapshot` flips true and toggles snap to the
+  //     server-authoritative values. This eliminates the "refresh → toggle
+  //     glows ON even though backend has it OFF" mismatch.
+  // zh-TW: Phase 20 — Bug 1 修正。追蹤是否已收到第一個伺服器快照。在收到前
+  //     所有 toggle 一律以 OFF 渲染並禁用 — 不再從寫死的預設值編造狀態。
+  //     一旦快照抵達，`hasSnapshot` 即翻為 true，toggle 立刻對齊伺服器的
+  //     權威值，徹底消除「刷新後 toggle 明明後端是 OFF 卻發光顯示 ON」的
+  //     視覺錯位。
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  useEffect(() => {
+    // EN: Poll the stateRef on a short cadence until the first snapshot lands;
+    //     once we see one, we never reset the flag — the server is the source
+    //     of truth for the rest of the session.
+    // zh-TW: 以短週期輪詢 stateRef，直到收到第一個快照；之後不再重設旗標，
+    //     伺服器在本次 session 內即為唯一權威來源。
+    if (hasSnapshot) return undefined;
+    const id = setInterval(() => {
+      if (stateRef.current?.settings) {
+        setHasSnapshot(true);
+      }
+    }, 50);
+    return () => clearInterval(id);
+  }, [hasSnapshot, stateRef]);
+
   // EN: Phase 12 — pending overrides for any toggleable setting. Keyed by
   //     setting name; the value is what we just sent to the server. The
   //     override is cleared as soon as the server's snapshot reports the
@@ -93,11 +120,24 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     });
   }, [settings]);
 
-  // EN: Helper — read the live value of a toggleable setting, preferring
-  //     the local pending override (if any) over the snapshot.
-  // zh-TW: helper — 讀取 toggle 欄位的當前值，pending override 優先於 snapshot。
-  const liveSetting = (key, fallback) =>
-    pending[key] !== undefined ? pending[key] : settings[key] ?? fallback;
+  // EN: Phase 20 — Bug 1 fix. Read the live value of a toggleable setting,
+  //     preferring local pending override > server snapshot > fallback. The
+  //     CRITICAL change: when no snapshot has been received yet, we IGNORE
+  //     the caller's fallback for booleans and force `false` — so toggles
+  //     never glow ON before the server has spoken. After the first snapshot
+  //     arrives, the server value is authoritative and the visual state
+  //     instantly snaps to the truth.
+  // zh-TW: Phase 20 — Bug 1 修正。讀取 toggle 欄位的當前值，優先順序為：
+  //     本地 pending > 伺服器快照 > fallback。關鍵改動：尚未收到任何快照前，
+  //     對 boolean 一律忽略呼叫者給的 fallback 並強制回傳 `false`，
+  //     避免 toggle 在伺服器未回應前就先發光「ON」。一旦收到第一個快照，
+  //     伺服器值即為權威，視覺狀態瞬間對齊真實值。
+  const liveSetting = (key, fallback) => {
+    if (pending[key] !== undefined) return pending[key];
+    if (settings[key] !== undefined) return settings[key];
+    if (!hasSnapshot && typeof fallback === "boolean") return false;
+    return fallback;
+  };
 
   // EN: Helper — commit a setting both optimistically (local pending) and
   //     to the server (admin_set). Used for every toggle in this panel.
@@ -243,10 +283,11 @@ export default function AdminPanel({ stateRef, send, onClose }) {
 
           <div className="br-divider" />
 
-          <div className="br-field">
-            <label className="br-field-label">{t.teamMode}</label>
-            <Toggle checked={!!liveSetting("team_mode", false)} onChange={(v) => setKey("team_mode", v)} />
-          </div>
+          {/* EN: Phase 20 — Teams toggle removed. The Teams feature was
+                  fully scrubbed from the project; no team_mode key exists
+                  on GameSettings anymore.
+              zh-TW: Phase 20 — 已移除隊伍切換。Teams 功能已從專案中全面
+                  清除，GameSettings 已不再有 team_mode 欄位。 */}
 
           <div className="br-field">
             <label className="br-field-label">{t.sortLeaderboard}</label>
@@ -512,11 +553,18 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                   • 設備欄改用 CSS 截斷（br-td--device），完整 UA 由
                     原生 `title` tooltip 顯示
                   • 增強列 hover 效果便於跨欄閱讀 */}
+          {/* EN: Phase 20 — TEAM column removed alongside the Teams feature.
+                  Device column now uses `truncate max-w-xs` per the polish
+                  spec — long User-Agent strings are clipped with an ellipsis
+                  and the full value remains accessible via the cell `title`
+                  attribute on hover.
+              zh-TW: Phase 20 — 隨著隊伍功能移除，TEAM 欄位已刪除。設備欄位
+                  套用 `truncate max-w-xs`：過長的 User-Agent 以省略號截斷，
+                  完整字串透過儲存格 `title` 屬性 hover 顯示。 */}
           <div className="br-table">
             <div className="br-table-head">
               <span className="br-th br-th--idx">#</span>
               <span className="br-th br-th--name">CALLSIGN</span>
-              <span className="br-th br-th--team">TEAM</span>
               <span className="br-th br-th--num">K</span>
               <span className="br-th br-th--num">D</span>
               <span className="br-th br-th--num">DMG</span>
@@ -542,11 +590,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                         </span>
                       )}
                     </span>
-                    <span className="br-td br-td--team">
-                      {p.team
-                        ? <span className={`br-team-pill br-team-pill--${p.team}`}>{p.team.toUpperCase()}</span>
-                        : <span className="br-mute">—</span>}
-                    </span>
+                    {/* EN: Phase 20 — TEAM column removed. / zh-TW: Phase 20 — 已移除 TEAM 欄位。 */}
                     <span className="br-td br-td--num br-mono">{p.kills ?? 0}</span>
                     <span className="br-td br-td--num br-mono br-mute">{p.deaths ?? 0}</span>
                     <span className="br-td br-td--num br-mono br-cyan">{Math.round(p.damage_dealt ?? 0)}</span>
@@ -557,20 +601,35 @@ export default function AdminPanel({ stateRef, send, onClose }) {
                         zh-TW: Phase 16.9 — 設備欄位。`br-td--device` CSS 類別
                             負責截斷；`title` 透過瀏覽器原生 tooltip 顯示
                             完整 UA / IP。 */}
+                    {/* EN: Phase 20 — apply Tailwind `truncate max-w-xs` to the
+                            UA span so very long User-Agent strings clip with an
+                            ellipsis instead of breaking the row layout. The
+                            `title` attribute exposes the full IP + UA on hover.
+                        zh-TW: Phase 20 — UA span 套用 Tailwind `truncate max-w-xs`，
+                            超長字串以省略號截斷，避免破壞列排版。完整 IP + UA
+                            透過 `title` 屬性 hover 顯示。 */}
                     <span
-                      className="br-td br-td--device"
+                      className="br-td br-td--device truncate max-w-xs"
                       title={ua ? `${t.adminIp}: ${ip}\n${t.adminUserAgent}: ${ua}` : t.adminDevice}
                     >
                       {p.is_bot ? (
                         <span className="br-mute">—</span>
                       ) : (
-                        <span style={{ display: "inline-flex", flexDirection: "column", minWidth: 0 }}>
-                          <span style={{ color: "#22d3ee", fontFamily: "var(--br-mono)", fontSize: 11 }}>{ip || "—"}</span>
-                          <span style={{
-                            color: "#5a6b8a", fontFamily: "var(--br-mono)", fontSize: 10,
-                            overflow: "hidden", textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}>
+                        <span style={{ display: "inline-flex", flexDirection: "column", minWidth: 0, maxWidth: "20rem" }}>
+                          <span
+                            className="truncate"
+                            style={{ color: "#22d3ee", fontFamily: "var(--br-mono)", fontSize: 11 }}
+                          >
+                            {ip || "—"}
+                          </span>
+                          <span
+                            className="truncate max-w-xs"
+                            style={{
+                              color: "#5a6b8a", fontFamily: "var(--br-mono)", fontSize: 10,
+                              overflow: "hidden", textOverflow: "ellipsis",
+                              whiteSpace: "nowrap", maxWidth: "20rem",
+                            }}
+                          >
                             {ua || "—"}
                           </span>
                         </span>

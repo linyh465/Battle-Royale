@@ -51,7 +51,11 @@ class Player(GameObject):
     state: str = STATE_ALIVE
     respawn_at: float = 0.0
     is_bot: bool = False
-    team: str = ""  # EN: "" / "red" / "blue"  zh-TW: 空字串 / 紅隊 / 藍隊
+    # EN: Phase 20 — Teams feature fully removed. The `team` attribute was
+    #     scrubbed from the model, broadcast payload, engine logic, and
+    #     frontend rendering. Free-for-all is now the only supported mode.
+    # zh-TW: Phase 20 — 完全移除「隊伍」功能。team 屬性已從模型、廣播封包、
+    #     引擎邏輯與前端渲染中清除，現在僅支援自由混戰模式。
 
     killed_by_name: str = ""
     killed_by_weapon: str = ""
@@ -138,7 +142,8 @@ class Player(GameObject):
             "status": self.state,
             "respawn_at": self.respawn_at,
             "is_bot": self.is_bot,
-            "team": self.team,
+            # EN: Phase 20 — `team` removed from broadcast payload.
+            # zh-TW: Phase 20 — 廣播封包中已移除 team。
             "killed_by_name": self.killed_by_name,
             "killed_by_weapon": self.killed_by_weapon,
         })

@@ -4,9 +4,12 @@ import asyncio
 import json
 import os
 import socket
+import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +20,55 @@ from engine import GameEngine
 from models import ALL_WEAPON_IDS as _ALL_WEAPON_IDS_TUPLE
 
 engine = GameEngine()
+
+
+# ── Phase 20: WebSocket connection rate limiter ────────────────────────────
+# EN: Basic anti-bot / anti-DoS rate limiter for the /ws endpoint. We keep a
+#     sliding window of recent connection timestamps per client IP and reject
+#     any handshake that would exceed the cap. This is intentionally simple
+#     (no Redis, no external state) — it's enough to stop a single host from
+#     opening hundreds of sockets per second to spam the game loop. Limits:
+#       WS_RATE_LIMIT_PER_IP     — max connections per window
+#       WS_RATE_LIMIT_WINDOW_SEC — window length in seconds
+#     Both are tunable via environment variables.
+# zh-TW: /ws 端點的基本防 bot / 防 DoS 連線速率限制。針對每個來源 IP 維護一個
+#     最近連線時間戳的滑動視窗，超過上限的 handshake 直接拒絕。設計刻意極簡
+#     （不依賴 Redis 或外部狀態），目的是阻止單一主機每秒打開上百個 socket
+#     刷爆遊戲迴圈。可透過環境變數調整：
+#       WS_RATE_LIMIT_PER_IP     — 視窗內最大連線數
+#       WS_RATE_LIMIT_WINDOW_SEC — 視窗長度（秒）
+_WS_RATE_LIMIT_PER_IP = int(os.environ.get("WS_RATE_LIMIT_PER_IP", "10"))
+_WS_RATE_LIMIT_WINDOW_SEC = float(os.environ.get("WS_RATE_LIMIT_WINDOW_SEC", "5.0"))
+_ws_rate_buckets: dict[str, deque[float]] = {}
+_ws_rate_lock = Lock()
+
+
+def _ws_rate_limit_ok(ip: str) -> bool:
+    # EN: Return True if a connection from `ip` is allowed right now, else False.
+    #     Empty IP (unknown peer) is always allowed — we don't want to lock out
+    #     legitimate clients behind misconfigured proxies. The bucket is pruned
+    #     of stale entries on every call so memory stays bounded.
+    # zh-TW: 若此 IP 此刻允許建立連線回傳 True，否則 False。空 IP（未知 peer）
+    #     一律放行，避免代理設定錯誤把正常使用者鎖在外面。每次呼叫都會修剪
+    #     過期紀錄，確保記憶體用量有界。
+    if not ip:
+        return True
+    now = time.monotonic()
+    cutoff = now - _WS_RATE_LIMIT_WINDOW_SEC
+    with _ws_rate_lock:
+        bucket = _ws_rate_buckets.setdefault(ip, deque())
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _WS_RATE_LIMIT_PER_IP:
+            return False
+        bucket.append(now)
+        # EN: Lightweight GC: occasionally drop empty buckets so the dict
+        #     doesn't grow without bound for one-off visitors.
+        # zh-TW: 輕量 GC：偶爾清掉空 bucket，避免一次性訪客讓 dict 無限成長。
+        if len(_ws_rate_buckets) > 1024:
+            for stale_ip in [k for k, v in _ws_rate_buckets.items() if not v]:
+                _ws_rate_buckets.pop(stale_ip, None)
+        return True
 
 
 def detect_lan_ip() -> str:
@@ -88,8 +140,9 @@ async def public_settings():
 
 # ── Helper: build the current admin settings dict ──
 def _admin_settings_dict() -> dict:
+    # EN: Phase 20 — `team_mode` removed alongside the Teams feature.
+    # zh-TW: Phase 20 — 隨著隊伍功能移除，已刪除 `team_mode`。
     return {
-        "team_mode": engine.settings.team_mode,
         "leaderboard_sort_by": engine.settings.leaderboard_sort_by,
         "base_respawn_time": engine.settings.base_respawn_time,
         "respawn_penalty": engine.settings.respawn_penalty,
@@ -133,6 +186,26 @@ def _client_ua(ws: WebSocket) -> str:
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    # EN: Phase 20 — rate-limit connections by client IP BEFORE accepting the
+    #     handshake. A malicious bot trying to open hundreds of sockets per
+    #     second from one host will hit the cap and get a 1008 close instead
+    #     of being able to inject join_admin / join_director attempts. The
+    #     IP is derived using the same proxy-aware helper used for the admin
+    #     panel device fingerprint.
+    # zh-TW: Phase 20 — 在 accept 之前先依來源 IP 做連線速率限制。惡意 bot 試圖
+    #     從同一台主機每秒開上百個 socket 時會被擋下並收到 1008 close，無法
+    #     灌注 join_admin / join_director 等 handshake。IP 取得方式與管理員面板
+    #     設備指紋共用同一個代理感知 helper。
+    ip = _client_ip(ws)
+    if not _ws_rate_limit_ok(ip):
+        # EN: 1008 = policy violation. We deliberately do NOT accept first;
+        #     a non-accepted reject is cheaper for the server and exposes
+        #     less surface to an attacker.
+        # zh-TW: 1008 = 政策違反。刻意不先 accept；直接拒絕對伺服器更便宜，
+        #     也減少攻擊面。
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     try:
         raw = await ws.receive_text()

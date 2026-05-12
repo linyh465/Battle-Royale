@@ -1,24 +1,29 @@
 /**
- * EN: App.jsx — Merged lobby with new UI + standalone admin routing.
- *     Phase 12: wrapped in <BrowserRouter>. The lobby still owns its own
- *     internal state machine (lobby → player → admin) at "/", but a global
- *     catch-all route ("*") now renders <NotFound /> for any URL the SPA
- *     does not own. The backend's SPA fallback returns index.html for
- *     unknown paths so React Router can pick the matching route.
- *     - "/" → Lobby (or DirectorCanvas if ?role=director).
- *     - "*" → NotFound (cyberpunk 404).
- *     - 5-click admin trigger → after admin_ok, route to full-screen AdminPanel.
- * zh-TW: App.jsx — 合併新 UI 的大廳 + 獨立管理員路由。
- *     Phase 12：以 <BrowserRouter> 包裹整支 app。大廳仍維持自己的內部狀態
- *     機（lobby → player → admin）並只匹配 "/"；catch-all 路由（"*"）
- *     會渲染 <NotFound />，處理 SPA 沒有定義的網址。後端 SPA fallback
- *     會把未知路徑回傳 index.html，讓 React Router 接手 routing。
- *     - "/" → 大廳（若 ?role=director 則改顯示 DirectorCanvas）。
- *     - "*" → NotFound（賽博龐克 404 頁面）。
- *     - 連點 5 下管理員觸發 → admin_ok 後切換為全螢幕 AdminPanel。
+ * EN: App.jsx — Phase 20.
+ *     - "/"        → Lobby (or DirectorCanvas if ?role=director).
+ *     - "/admin"   → Phase 20 formal admin route: dark-themed login screen
+ *                    that, on successful password auth, renders <AdminPanel>.
+ *                    The 5-click logo easter egg on the lobby still works for
+ *                    backwards compatibility, but ops can now also reach the
+ *                    admin panel directly by URL.
+ *     - "*"        → NotFound (cyberpunk 404).
+ *     A React <ErrorBoundary> wraps <GameCanvas /> so any uncaught render error
+ *     shows a fallback instead of a white screen (Bug 2 fix). The build's
+ *     version string is read from APP_VERSION and rendered at the very bottom
+ *     of the lobby — the constant is updated by the claude.md version
+ *     controller on every change.
+ * zh-TW: App.jsx — Phase 20。
+ *     - "/"        → 大廳（若 ?role=director 則改顯示 DirectorCanvas）。
+ *     - "/admin"   → Phase 20 正式管理員路由：深色登入畫面，密碼通過後
+ *                    渲染 <AdminPanel>。原本連點 5 下 logo 的彩蛋仍可使用，
+ *                    但運維現在能直接以網址抵達管理面板。
+ *     - "*"        → NotFound（賽博龐克 404 頁面）。
+ *     React <ErrorBoundary> 包覆 <GameCanvas />，任何 render 例外都會顯示
+ *     fallback UI 而非白畫面（Bug 2 修正）。版本字串由 APP_VERSION 常數讀取，
+ *     渲染在大廳最底部 — 此常數由 claude.md 版本控制器在每次更新時遞增。
  */
-import { useEffect, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useRef, useState, Component } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { useI18n } from "./i18n.jsx";
 import GameCanvas from "./components/GameCanvas.jsx";
@@ -29,6 +34,15 @@ import NotFound from "./components/NotFound.jsx";
 import Docs from "./components/Docs.jsx";
 import expandSnapshot from "./hooks/expandSnapshot.js";
 
+// EN: Phase 20 — single source of truth for the displayed build version.
+//     The companion `claude.md` version controller in the repo root tracks
+//     the changelog; this string is bumped in lockstep with every published
+//     change so the lobby footer never lies.
+// zh-TW: Phase 20 — 顯示版本字串的唯一權威來源。倉庫根目錄的 `claude.md`
+//     版本控制器記錄變更紀錄；每次發布都會與此字串同步遞增，
+//     確保大廳頁尾顯示的版本永遠正確。
+export const APP_VERSION = "v2.5.0";
+
 const WS_URL = (() => {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ws`;
@@ -38,33 +52,213 @@ const WS_URL = (() => {
 // zh-TW: 在模組載入時讀一次 ?role=director，整段 session 不會變。
 const ROLE = new URLSearchParams(location.search).get("role");
 
+// EN: Phase 20 — Bug 2 frontend half. <CanvasErrorBoundary> catches any
+//     render-time exception thrown inside <GameCanvas> (and its descendants)
+//     and shows a cyberpunk fallback instead of leaving the user staring at
+//     a white screen. The "Reload" button is unconditional — even if the
+//     state is irreparable, a hard refresh always gets the player back in.
+// zh-TW: Phase 20 — Bug 2 前端半。<CanvasErrorBoundary> 攔截 <GameCanvas>
+//     及其子節點在 render 階段拋出的任何例外，改顯示賽博龐克 fallback，
+//     避免玩家看到白畫面。Reload 按鈕無條件可用 — 即使狀態無法恢復，
+//     硬刷新永遠能讓玩家重新進入遊戲。
+class CanvasErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    // EN: Surface to the console so the bug remains diagnosable.
+    // zh-TW: 印到 console 以保留除錯資訊。
+    // eslint-disable-next-line no-console
+    console.error("[CanvasErrorBoundary] uncaught render error:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          background: "#03070d", color: "#ff7a8e",
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          fontFamily: "var(--br-mono, ui-monospace, monospace)",
+          padding: 24, textAlign: "center",
+        }}>
+          <div style={{
+            fontSize: "clamp(20px,5vw,40px)",
+            letterSpacing: "0.18em", marginBottom: 12,
+            textShadow: "0 0 24px rgba(255,59,92,0.6)",
+          }}>
+            ⚠ CLIENT ERROR
+          </div>
+          <div style={{ fontSize: 14, color: "#91a3c4", marginBottom: 24, maxWidth: 480 }}>
+            The arena hit an unexpected render error. The server is still
+            running — reload the page to rejoin.
+            <br />
+            畫面渲染發生未預期錯誤，伺服器仍在運作，重新整理即可重新加入。
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "10px 28px",
+              background: "rgba(34,211,238,0.12)",
+              border: "1px solid rgba(34,211,238,0.45)",
+              borderRadius: 8, color: "#22d3ee",
+              fontFamily: "inherit", letterSpacing: "0.2em",
+              cursor: "pointer",
+            }}
+          >RELOAD ▸</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  // EN: Phase 12 — top-level <BrowserRouter> so any deep-linked URL the SPA
-  //     does not own falls through to <NotFound />. The lobby itself still
-  //     handles director / player / admin views via internal state.
-  // zh-TW: Phase 12 — 在最外層加上 <BrowserRouter>，任何 SPA 不認識的網址
-  //     都會 fallthrough 到 <NotFound />。大廳本身仍透過內部 state 切換
-  //     導播 / 玩家 / 管理員視圖。
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<RootRoute />} />
-        {/* EN: Phase 15 — native React docs (replaces MkDocs).
-                /docs alone redirects to /docs/en for back-compat with the
-                old MkDocs landing URL. /docs/en and /docs/zh-TW are the
-                two strictly-monolingual entry points. Any other /docs/*
-                slug is treated as English.
-            zh-TW: Phase 15 — 原生 React 文件（取代 MkDocs）。
-                /docs 直接 302 到 /docs/en，與舊版 MkDocs landing URL
-                相容；/docs/en、/docs/zh-TW 是兩條嚴格單一語系入口；
-                其他 /docs/* 一律視為英文。 */}
         <Route path="/docs" element={<Navigate to="/docs/en" replace />} />
         <Route path="/docs/:lang" element={<Docs />} />
-        {/* EN: Catch-all — anything else renders the cyberpunk 404.
-            zh-TW: catch-all — 其他路徑一律渲染賽博龐克 404 頁面。 */}
+        {/* EN: Phase 20 — formal /admin route: dark login screen → AdminPanel.
+            zh-TW: Phase 20 — 正式 /admin 路由：深色登入畫面 → AdminPanel。 */}
+        <Route path="/admin" element={<AdminRoute />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
+  );
+}
+
+// EN: Phase 20 — Dedicated /admin route. Opens its own admin WebSocket using
+//     the same `join_admin` handshake the lobby's 5-click easter egg uses,
+//     and renders the same <AdminPanel> on success. Failure shows an inline
+//     error on the login screen — no alert popups.
+// zh-TW: Phase 20 — 專用 /admin 路由。使用與大廳 5 連點彩蛋相同的
+//     `join_admin` handshake 開啟管理員 WS，認證成功後渲染同一個
+//     <AdminPanel>；失敗時於登入畫面直接顯示錯誤訊息，不再彈出 alert。
+function AdminRoute() {
+  const navigate = useNavigate();
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [authed, setAuthed] = useState(false);
+  const stateRef = useRef(null);
+  const wsRef = useRef(null);
+  const sendRef = useRef(() => {});
+
+  const tryLogin = (password) => {
+    setErr("");
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "join_admin", password }));
+    };
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === "state") {
+        stateRef.current = expandSnapshot(msg);
+      } else if (msg.type === "admin_ok") {
+        setAuthed(true);
+      } else if (msg.type === "admin_fail") {
+        setErr("Authentication failed / 驗證失敗");
+        try { ws.close(); } catch { /* noop */ }
+      }
+    };
+    ws.onerror = () => {
+      setErr("Connection error / 連線錯誤");
+    };
+    sendRef.current = (m) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+    };
+  };
+
+  if (authed) {
+    return (
+      <AdminPanel
+        stateRef={stateRef}
+        send={sendRef.current}
+        onClose={() => {
+          try { wsRef.current?.close(); } catch { /* noop */ }
+          setAuthed(false);
+          navigate("/");
+        }}
+      />
+    );
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      background: "#03070d", color: "#d8e6ff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "var(--br-mono, ui-monospace, monospace)",
+      padding: 24,
+    }}>
+      <div style={{
+        width: "min(92vw, 380px)",
+        background: "rgba(10,18,38,0.92)",
+        border: "1px solid rgba(255,59,92,0.35)",
+        borderRadius: 12, padding: 28,
+        boxShadow: "0 0 32px rgba(255,59,92,0.18)",
+      }}>
+        <div style={{
+          fontFamily: "var(--br-display, ui-monospace, monospace)",
+          fontSize: 22, letterSpacing: "0.2em",
+          color: "#ff7a8e", marginBottom: 4,
+          textShadow: "0 0 18px rgba(255,59,92,0.5)",
+        }}>
+          ADMIN ACCESS
+        </div>
+        <div style={{ fontSize: 11, color: "#5a6b8a", letterSpacing: "0.24em", marginBottom: 20 }}>
+          管理員登入 · COMMAND CENTER
+        </div>
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (pw) tryLogin(pw); }}
+          style={{ display: "flex", flexDirection: "column", gap: 12 }}
+        >
+          <input
+            type="password"
+            autoFocus
+            value={pw}
+            placeholder="password / 密碼"
+            onChange={(e) => setPw(e.target.value)}
+            style={{
+              background: "rgba(3,7,13,0.7)",
+              border: "1px solid rgba(110,145,200,0.25)",
+              borderRadius: 6, color: "#d8e6ff",
+              padding: "10px 12px", fontFamily: "inherit",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!pw}
+            style={{
+              padding: "10px 16px",
+              background: pw ? "rgba(255,59,92,0.18)" : "rgba(110,145,200,0.08)",
+              border: pw
+                ? "1px solid rgba(255,59,92,0.5)"
+                : "1px solid rgba(110,145,200,0.15)",
+              borderRadius: 6,
+              color: pw ? "#ff7a8e" : "#5a6b8a",
+              fontFamily: "inherit", letterSpacing: "0.2em",
+              cursor: pw ? "pointer" : "not-allowed",
+            }}
+          >AUTHENTICATE ▸</button>
+          {err && (
+            <div style={{ fontSize: 12, color: "#ff3b5c", letterSpacing: "0.12em" }}>
+              {err}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "#5a6b8a", marginTop: 4 }}>
+            {APP_VERSION}
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -281,12 +475,19 @@ function Lobby({ wsUrl }) {
     return (
       <>
         <PortraitLock />
-        <GameCanvas
-          wsUrl={wsUrl}
-          name={trimmedName}
-          weapon={weapon}
-          adminPassword={null}
-        />
+        {/* EN: Phase 20 — Bug 2: ErrorBoundary catches any render crash so the
+                player sees a fallback (with a reload button) instead of a
+                blank white screen.
+            zh-TW: Phase 20 — Bug 2：ErrorBoundary 攔截 render 階段的崩潰，
+                顯示帶有 reload 按鈕的 fallback UI，取代白畫面。 */}
+        <CanvasErrorBoundary>
+          <GameCanvas
+            wsUrl={wsUrl}
+            name={trimmedName}
+            weapon={weapon}
+            adminPassword={null}
+          />
+        </CanvasErrorBoundary>
       </>
     );
   }
@@ -501,10 +702,14 @@ function Lobby({ wsUrl }) {
         </aside>
       </main>
 
+      {/* EN: Phase 20 — version string is read from the APP_VERSION constant
+              which is bumped in lockstep with the claude.md version controller.
+          zh-TW: Phase 20 — 版本字串由 APP_VERSION 常數讀入，與 claude.md
+              版本控制器同步遞增。 */}
       <footer className="br-foot">
         <span className="br-foot-dot" />{t.nodeOnline}
         <span className="br-foot-sep">·</span>
-        v2.4.1
+        {APP_VERSION}
         <span className="br-foot-sep">·</span>
         {t.mobile}
       </footer>

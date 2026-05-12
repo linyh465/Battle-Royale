@@ -8,10 +8,11 @@ from .player import Player, STATE_ALIVE
 from .weapon import Rifle
 
 
-# EN: Minimal AI bot. Picks the nearest non-team enemy, runs at it, fires when in range.
-#     Used by the engine when team_mode is on, to balance Red vs Blue head-counts.
-# zh-TW: 簡易 AI Bot：鎖定最近的非同隊敵人、靠近、射擊；
-#         在 team_mode 開啟時由引擎自動補位以平衡紅藍隊人數。
+# EN: Minimal AI bot. Picks the nearest alive non-bot enemy, runs at it,
+#     fires when in range. Phase 20 — teams feature removed; bots simply
+#     target the nearest human player without any team filtering.
+# zh-TW: 簡易 AI Bot：鎖定最近的存活非 Bot 敵人、靠近、射擊。
+#     Phase 20 — 已移除隊伍功能；Bot 不再做隊伍過濾，直接追擊最近的人類玩家。
 @dataclass
 class BotPlayer(Player):
     is_bot: bool = True
@@ -61,8 +62,8 @@ class BotPlayer(Player):
                 continue
             if getattr(o, "is_bot", False):
                 continue
-            if self.team and o.team and o.team == self.team:
-                continue
+            # EN: Phase 20 — team filtering removed alongside the team feature.
+            # zh-TW: Phase 20 — 隨著隊伍功能移除，此處不再做隊伍過濾。
 
             # EN: Honour the global focus-fire cap. `max_focus <= 0` means
             #     unlimited (skip the check entirely).
