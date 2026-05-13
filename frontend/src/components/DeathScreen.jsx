@@ -57,7 +57,17 @@ export default function DeathScreen({
           alignItems: "center",
           marginBottom: "clamp(8px, 2vh, 16px)",
         }}>
-          {/* Respawn button with countdown ring — centered via flexbox */}
+          {/* EN: Phase 22 — countdown ring + number now share a single strict
+                  flex container (`relative` + `flex items-center justify-center`).
+                  The SVG ring is positioned `absolute inset-0 w-full h-full` so it
+                  fills the parent without affecting layout, and the inner label
+                  stack is the only flow content — meaning the text and progress
+                  circle are natively centered with NO manual margins.
+              zh-TW: Phase 22 — 倒數圓環與數字現在共用一個嚴格的 flex 容器
+                  （`relative` + `flex items-center justify-center`）。SVG 圓環以
+                  `absolute inset-0 w-full h-full` 鋪滿父層、不影響排版；內部
+                  文字堆疊是唯一的 flow 內容，因此數字與進度圓環會原生置中，
+                  無需任何手動 margin。 */}
           <button
             className={`br-death-btn br-death-btn--respawn ${canRespawn ? "is-ready" : "is-cooling"}`}
             onClick={canRespawn ? onRespawn : undefined}
@@ -69,11 +79,28 @@ export default function DeathScreen({
               padding: "clamp(4px, 1vh, 8px) clamp(8px, 2vw, 16px)",
             }}
           >
-            <span className="br-death-btn-ring" aria-hidden style={{
-              width: "clamp(64px, 14vw, 96px)", height: "clamp(64px, 14vw, 96px)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <svg viewBox="0 0 108 108" width="100%" height="100%">
+            <span
+              className="br-death-btn-ring"
+              aria-hidden
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "clamp(64px, 14vw, 96px)",
+                height: "clamp(64px, 14vw, 96px)",
+              }}
+            >
+              <svg
+                viewBox="0 0 108 108"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  pointerEvents: "none",
+                }}
+              >
                 <circle cx="54" cy="54" r={R} stroke="rgba(34,211,238,0.18)" strokeWidth="3" fill="none" />
                 <circle
                   cx="54" cy="54" r={R}
@@ -85,28 +112,36 @@ export default function DeathScreen({
                   style={{ transition: "stroke-dashoffset 100ms linear" }}
                 />
               </svg>
-            </span>
-            <span className="br-death-btn-inner" style={{
-              display: "flex", flexDirection: "column",
-              alignItems: "center", justifyContent: "center",
-            }}>
-              {canRespawn ? (
-                <>
-                  <span className="br-death-btn-icon">▸</span>
-                  <span className="br-death-btn-label" style={{ fontSize: "clamp(11px, 3vw, 14px)" }}>
-                    {t.respawn}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="br-death-btn-count" style={{ fontSize: "clamp(16px, 4vw, 24px)" }}>
-                    {seconds}
-                  </span>
-                  <span className="br-death-btn-label" style={{ fontSize: "clamp(10px, 2.5vw, 12px)" }}>
-                    {t.cooldown}
-                  </span>
-                </>
-              )}
+              <span
+                className="br-death-btn-inner"
+                style={{
+                  position: "relative",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  lineHeight: 1,
+                  textAlign: "center",
+                }}
+              >
+                {canRespawn ? (
+                  <>
+                    <span className="br-death-btn-icon">▸</span>
+                    <span className="br-death-btn-label" style={{ fontSize: "clamp(11px, 3vw, 14px)" }}>
+                      {t.respawn}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="br-death-btn-count" style={{ fontSize: "clamp(16px, 4vw, 24px)" }}>
+                      {seconds}
+                    </span>
+                    <span className="br-death-btn-label" style={{ fontSize: "clamp(10px, 2.5vw, 12px)" }}>
+                      {t.cooldown}
+                    </span>
+                  </>
+                )}
+              </span>
             </span>
           </button>
 

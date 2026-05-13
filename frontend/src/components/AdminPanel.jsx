@@ -35,7 +35,7 @@
  *       - 套用 Tailwind 響應式前綴（flex-col / md:flex-row …），
  *         讓管理員介面在手機寬度也能正常使用。
  */
-import { memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n.jsx";
 
 // EN: Server-side weapon IDs. Must match models/weapon.py ALL_WEAPON_IDS.
@@ -698,6 +698,21 @@ export default function AdminPanel({ stateRef, send, onClose }) {
             <div className="br-spark"><Sparkline /></div>
           </div>
 
+          {/* EN: Phase 22 — Live Leaderboard widget. Consumes the same snapshot
+                  the rest of the admin UI is already polling and renders the
+                  top players sorted by the active leaderboard category
+                  (`active_leaderboard_type`, with a `kills` fallback). This is
+                  a real-time view: it re-renders on every 250 ms admin tick.
+              zh-TW: Phase 22 — 即時排行榜小工具。共用整個管理員面板每 250ms
+                  輪詢的同一份 snapshot，依目前選定的排行榜類別
+                  （`active_leaderboard_type`，未知值 fallback 至 `kills`）即時
+                  排序顯示前幾名玩家。 */}
+          <LiveLeaderboardCard
+            players={players}
+            activeType={liveSetting("active_leaderboard_type", "kills")}
+            t={t}
+          />
+
           <div className="br-glass br-glass--danger br-danger-card">
             <PanelHead title={t.dangerZone} small danger />
             <button className="br-btn br-btn--danger"
@@ -719,6 +734,78 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               zh-TW: Phase 12 — 已完全移除壓力測試面板，後端 engine.py /
               main.py 中對應的程式碼也一併刪除。 */}
         </section>
+      </div>
+    </div>
+  );
+}
+
+// EN: Phase 22 — compact real-time leaderboard card for the AdminPanel right
+//     column. Renders the top 8 players sorted by the active leaderboard
+//     metric; bots are flagged with the 🤖 prefix the rest of the UI uses.
+//     Updates passively via the admin tick (no extra polling).
+// zh-TW: Phase 22 — AdminPanel 右欄的緊湊即時排行榜卡片。依目前選定的排行榜
+//     指標排序，顯示前 8 名玩家；bot 沿用其他畫面的 🤖 前綴標記。
+//     透過管理員既有的 tick 被動更新（不另外 polling）。
+function LiveLeaderboardCard({ players, activeType, t }) {
+  const labelMap = {
+    kills: t.lbKills,
+    deaths: t.lbDeaths,
+    damage_dealt: t.lbDamageDealt,
+    damage_taken: t.lbDamageTaken,
+  };
+  const key = labelMap[activeType] ? activeType : "kills";
+  const label = labelMap[key];
+
+  const top = [...players]
+    .sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0))
+    .slice(0, 8);
+
+  return (
+    <div className="br-glass br-telem-card">
+      <PanelHead title={t.liveLeaderboard} small />
+      <div style={{
+        fontFamily: "var(--br-mono)", fontSize: 10, letterSpacing: "0.18em",
+        color: "#5a6b8a", marginBottom: 6,
+      }}>
+        {t.sortedBy}: <span style={{ color: "#22d3ee" }}>{label}</span>
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "28px 1fr auto",
+        rowGap: 4, columnGap: 8,
+        fontFamily: "var(--br-mono)", fontSize: 12,
+        color: "#d8e6ff",
+      }}>
+        {top.length === 0 && (
+          <div style={{
+            gridColumn: "1 / -1", textAlign: "center",
+            color: "#5a6b8a", padding: "8px 0",
+          }}>{t.noPlayers}</div>
+        )}
+        {top.map((p, i) => {
+          const stateColor =
+            p.state === "alive" ? "#22c55e"
+            : p.state === "dead" ? "#ff7a8e"
+            : "#91a3c4";
+          return (
+            <Fragment key={p.id}>
+              <span style={{
+                color: i === 0 ? "#fbbf24" : "#5a6b8a", fontSize: 11,
+              }}>
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span style={{
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: stateColor,
+              }}>
+                {p.is_bot ? "🤖 " : ""}{p.name}
+              </span>
+              <span style={{ color: "#22d3ee", textAlign: "right" }}>
+                {typeof p[key] === "number" ? Math.round(p[key]) : (p[key] ?? 0)}
+              </span>
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );

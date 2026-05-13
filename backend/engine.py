@@ -86,8 +86,19 @@ class GameSettings:
     # zh-TW: Phase 20 — 已移除 `team_mode`。隊伍功能已從模型、引擎、廣播、
     #     管理員 UI 全面清除，未來僅支援自由混戰模式。
     leaderboard_sort_by: str = "kills"
-    base_respawn_time: float = 5.0
-    respawn_penalty: float = 3.0
+    # EN: Phase 22 — flat respawn timer. The Phase 15 dynamic penalty
+    #     (`wait = base + deaths × penalty`) was removed because the
+    #     escalating wait time felt punitive in extended sandbox brawls.
+    #     `base_respawn_time` is now the entire wait; `respawn_penalty`
+    #     stays as a field (for admin override and wire-format stability)
+    #     but defaults to 0.0 so the math collapses to a flat 4s.
+    # zh-TW: Phase 22 — 改為固定重生秒數。Phase 15 的動態懲罰公式
+    #     `等待 = 基礎 + 死亡次數 × 懲罰` 因長時間沙盒對戰下等待時間越來越
+    #     長而被移除。`base_respawn_time` 現在就是整段等待時間；
+    #     `respawn_penalty` 仍保留欄位（保留管理員覆寫權與線上格式相容性），
+    #     但預設 0.0，計算結果即為靜態 4 秒。
+    base_respawn_time: float = 4.0
+    respawn_penalty: float = 0.0
     game_duration: float = 0.0
     leaderboard_columns: str = "kills,deaths,damage_dealt,damage_taken"
     # HP defaults

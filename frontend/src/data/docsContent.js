@@ -43,11 +43,15 @@ What is this? A 2D top-down multiplayer battle royale built as a project for the
 
 The game runs as a **Continuous Ember Mode** inside a fixed rectangular arena (2560 × 1440 px). No shrinking zone.
 
-## Dynamic Respawn Penalty
+## Respawn Timer (Phase 22 — Flat 4s)
+
+Respawn is a **flat 4-second wait** for every player on every death. The Phase 15 dynamic penalty formula has been retired — the wait no longer scales with death count, so extended sandbox brawls feel fair instead of escalating.
 
 \`\`\`
-Wait Time = base_respawn_time(5s) + death_count × respawn_penalty(3s)
+Wait Time = base_respawn_time(4s) + death_count × respawn_penalty(0s) = 4s
 \`\`\`
+
+> The \`base_respawn_time\` and \`respawn_penalty\` fields remain admin-tunable in the Game Settings panel for one-off match overrides.
 
 ## Six-Weapon Arsenal
 
@@ -206,7 +210,15 @@ The \`/ws\` endpoint enforces a per-IP connection cap to deter bots and accident
 | \`WS_RATE_LIMIT_PER_IP\` | \`10\` | Max connections per window from one IP |
 | \`WS_RATE_LIMIT_WINDOW_SEC\` | \`5.0\` | Sliding window length in seconds |
 
-When the cap is hit, the server closes the socket with WebSocket code \`1008\` (policy violation) **before** accepting the handshake.`,
+When the cap is hit, the server closes the socket with WebSocket code \`1008\` (policy violation) **before** accepting the handshake.
+
+## Admin Telemetry — Live Leaderboard (Phase 22)
+
+A new **Live Leaderboard** card sits in the Admin Dashboard's right column alongside Live Telemetry. It consumes the same WebSocket \`snapshot\` payload the rest of the dashboard already polls and renders the top players sorted by the currently-selected leaderboard category (\`active_leaderboard_type\` — kills, deaths, damage dealt, or damage taken).
+
+- Top 8 players are listed; bots are prefixed with 🤖, and each name's colour reflects state (alive / down / spectating).
+- The widget re-renders on the existing 250 ms admin tick — no extra polling.
+- Changing the leaderboard category in Game Settings instantly re-sorts this widget too, so the admin always sees the standings under the same lens players will see in the POST_GAME overlay.`,
     },
 
     techArch: {
@@ -321,7 +333,15 @@ All unknown routes fall back to \`index.html\`, handled by React Router. Unmatch
 
 - **Frontend Docs Rule:** \`src/data/docsContent.js\` is the authoritative changelog source. Every feature add or bug fix MUST append a bilingual entry to \`history.developmentLog\` (both \`en\` and \`zhTW\`).
 - **\`claude.md\` Rule:** Reserved for *major milestones, architectural shifts, critical env vars, and major version bumps only*. Minor fixes, CSS tweaks, and typo corrections do not belong there.
-- **Retroactive Sync:** Phase 20 entries above were retroactively added to bring this log up to date.`,
+- **Retroactive Sync:** Phase 20 entries above were retroactively added to bring this log up to date.
+
+## Phase 22 — UI Hotfixes, Death Screen Alignment, Admin Telemetry & Respawn Logic
+
+- **Mobile HUD / Minimap Regression Fix:** \`getHudScale()\` no longer trusts viewport width alone. Mobile scale (\`0.5×\`) now also fires when the primary pointer is coarse (touch), so landscape phones with \`innerWidth >= 768\` can never slip into the desktop branch and re-inflate the HUD and minimap.
+- **Death Screen Cooldown Alignment:** The respawn button's countdown ring is now a strict \`relative\` flex container; the SVG is \`absolute inset-0\` and the countdown number sits inside the same container as the only flow child. Number and progress circle are natively centred — no manual margins, no more offset.
+- **Admin Live Leaderboard Widget:** New \`<LiveLeaderboardCard>\` in the Admin Dashboard right column. Consumes the existing snapshot, sorts by \`active_leaderboard_type\`, and renders the top 8 players (bots flagged 🤖; row colour reflects state) on every 250 ms tick.
+- **Flat 4-Second Respawn:** \`GameSettings.base_respawn_time\` → \`4.0\` and \`respawn_penalty\` → \`0.0\`. The Phase 15 dynamic formula \`base + deaths × penalty\` is retired; respawn is now a static 4 seconds regardless of death count. Admin can still override per match.
+- **Version Bump:** \`APP_VERSION\` advanced to \`v2.6.0\` to reflect the new admin widget plus the respawn-mechanic change.`,
 
       designLog: `# Design Log — Battle Royale
 
@@ -361,11 +381,15 @@ All unknown routes fall back to \`index.html\`, handled by React Router. Unmatch
 
 遊戲以**持續餘燼模式**運行於固定矩形競技場（2560 × 1440 px）。無縮圈。
 
-## 動態重生與懲罰機制
+## 重生計時器（Phase 22 — 固定 4 秒）
+
+每位玩家每次死亡都採用**固定 4 秒等待**。Phase 15 的動態懲罰公式已被移除——等待時間不再隨死亡次數遞增，使長時間沙盒對戰更公平、不再越死越久。
 
 \`\`\`
-等待時間 = 基礎重生時間(5s) + 死亡次數 × 重生懲罰(3s)
+等待時間 = 基礎重生時間(4s) + 死亡次數 × 重生懲罰(0s) = 4s
 \`\`\`
+
+> \`base_respawn_time\` 與 \`respawn_penalty\` 仍保留在遊戲設定面板中，方便管理員為特定場次臨時覆寫。
 
 ## 六種武器庫
 
@@ -524,7 +548,15 @@ npm run dev    # vite --host
 | \`WS_RATE_LIMIT_PER_IP\` | \`10\` | 單一 IP 在視窗內最大連線數 |
 | \`WS_RATE_LIMIT_WINDOW_SEC\` | \`5.0\` | 滑動視窗長度（秒） |
 
-當超過上限時，伺服器會在 \`accept()\` 前以 WebSocket close code \`1008\`（policy violation）關閉連線。`,
+當超過上限時，伺服器會在 \`accept()\` 前以 WebSocket close code \`1008\`（policy violation）關閉連線。
+
+## 管理員遙測 — 即時排行榜（Phase 22）
+
+管理員面板右欄新增一張**即時排行榜**卡片，與即時遙測卡並列。它共用整個面板既有的 WebSocket \`snapshot\` 輪詢，依目前選定的排行榜類別（\`active_leaderboard_type\` — 擊殺、死亡、造成傷害、承受傷害）即時排序顯示前幾名玩家。
+
+- 列出前 8 名玩家；bot 以 🤖 標示，名字顏色直接反映狀態（存活 / 倒地 / 觀戰）。
+- 透過管理員既有的 250 ms tick 被動更新，不額外輪詢。
+- 在「遊戲設定」中切換排行榜類別時，本卡片會立即重新排序，讓管理員看到的排名與玩家在 POST_GAME 覆蓋層看到的視角一致。`,
     },
 
     techArch: {
@@ -639,7 +671,15 @@ PLAYING → POST_GAME → (重置對戰) → PLAYING
 
 - **前端文件規則：** \`src/data/docsContent.js\` 為變更紀錄的唯一權威來源。每次新增功能或修正錯誤都必須將雙語條目追加到 \`history.developmentLog\`（\`en\` 與 \`zhTW\` 兩側都要）。
 - **\`claude.md\` 規則：** 僅保留 *重大里程碑、架構變動、關鍵環境變數、主要版本號跳躍*。次要修正、CSS 微調、錯字修正不應出現在 \`claude.md\` 中。
-- **回填同步：** Phase 20 條目已回填至本日誌，使紀錄與目前程式碼一致。`,
+- **回填同步：** Phase 20 條目已回填至本日誌，使紀錄與目前程式碼一致。
+
+## Phase 22 — UI 修補、死亡畫面對齊、管理員遙測與重生邏輯
+
+- **行動裝置 HUD / 小地圖回歸修正：** \`getHudScale()\` 不再只看視窗寬度。當主指標為粗指標（觸控）時，即使 \`innerWidth >= 768\` 也會強制套用行動裝置縮放（\`0.5×\`），徹底解決手機橫向時誤判為桌面、HUD 與小地圖回到大尺寸的問題。
+- **死亡畫面倒數對齊修正：** 重生按鈕的倒數圓環改用嚴格的 \`relative\` flex 容器；SVG 以 \`absolute inset-0\` 鋪滿，倒數數字是容器內唯一的 flow 子元素。數字與進度圓環現由 flex 原生置中，無需任何手動 margin，偏移問題已消失。
+- **管理員即時排行榜小工具：** 管理員面板右欄新增 \`<LiveLeaderboardCard>\`。共用既有 snapshot，依 \`active_leaderboard_type\` 排序，顯示前 8 名玩家（bot 標 🤖、名字顏色反映狀態），每 250ms tick 重新渲染。
+- **固定 4 秒重生：** \`GameSettings.base_respawn_time\` → \`4.0\`、\`respawn_penalty\` → \`0.0\`。Phase 15 的動態公式 \`基礎 + 死亡 × 懲罰\` 退役，現一律靜態 4 秒重生；管理員仍可逐場覆寫。
+- **版本升版：** \`APP_VERSION\` 升至 \`v2.6.0\`，反映新增的管理員小工具與重生機制變更。`,
 
       designLog: `# 設計日誌 — Battle Royale
 

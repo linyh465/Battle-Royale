@@ -7,23 +7,28 @@ import DeathScreen from "./DeathScreen.jsx";
 const INPUT_HZ = 30;
 const INPUT_DT = 1000 / INPUT_HZ;
 
-// EN: Phase 20 — responsive HUD / minimap scale. Mobile keeps the existing
-//     compact 0.5× sizing so finger-sized UI stays out of the action; desktop
-//     (>=768 px viewport) scales to 1.0× so HUD and minimap are readable on a
-//     1440p monitor. The scale helper is evaluated each frame inside the
-//     render loop, so a resize from portrait-phone to landscape-tablet snaps
-//     to the correct size without reloading.
-// zh-TW: Phase 20 — 響應式 HUD / 小地圖縮放。行動裝置維持原本緊湊的 0.5×，
-//     避免大尺寸 UI 擋住操作；桌面（viewport >= 768px）放大到 1.0×，
-//     讓 1440p 顯示器上 HUD 與小地圖清晰易讀。比例每幀重新計算，
-//     從手機直式切換到平板橫式時也會即時對齊。
+// EN: Phase 22 — strict responsive HUD / minimap scale. The Phase 20 logic
+//     regressed on mobile because a landscape phone with innerWidth >= 768
+//     would slip into the desktop branch and render the HUD/minimap at full
+//     1.0× size. We now treat the device as mobile whenever EITHER the
+//     viewport is below 768px OR the primary pointer is coarse (touch). The
+//     mobile scale is a hard 0.5× of the desktop reference, evaluated each
+//     frame so orientation changes snap to the correct size without reloading.
+// zh-TW: Phase 22 — 嚴格的響應式 HUD / 小地圖縮放。Phase 20 的判斷在手機
+//     橫向（innerWidth >= 768）時會誤判為桌面而以 1.0× 渲染，造成 HUD 與
+//     小地圖在行動裝置上回到原本的大尺寸。改為「viewport 小於 768px」或
+//     「主指標為粗指標（觸控）」任一條件滿足就視為行動裝置。行動裝置一律
+//     使用桌面參考值的 0.5×，每幀重新計算，旋轉時也會立即對齊。
 const HUD_SCALE_MOBILE = 0.5;
 const HUD_SCALE_DESKTOP = 1.0;
 const DESKTOP_BREAKPOINT = 768;
-const getHudScale = () =>
-  (typeof window !== "undefined" && window.innerWidth >= DESKTOP_BREAKPOINT)
-    ? HUD_SCALE_DESKTOP
-    : HUD_SCALE_MOBILE;
+const getHudScale = () => {
+  if (typeof window === "undefined") return HUD_SCALE_DESKTOP;
+  const narrowViewport = window.innerWidth < DESKTOP_BREAKPOINT;
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches
+    || "ontouchstart" in window;
+  return (narrowViewport || coarsePointer) ? HUD_SCALE_MOBILE : HUD_SCALE_DESKTOP;
+};
 
 // EN: Phase 17 — minimap is a 16:9 rectangle matching the world aspect ratio
 //     (2560×1440). Phase 20 multiplies these base dimensions by `getHudScale()`

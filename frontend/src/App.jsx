@@ -41,7 +41,7 @@ import expandSnapshot from "./hooks/expandSnapshot.js";
 // zh-TW: Phase 20 — 顯示版本字串的唯一權威來源。倉庫根目錄的 `claude.md`
 //     版本控制器記錄變更紀錄；每次發布都會與此字串同步遞增，
 //     確保大廳頁尾顯示的版本永遠正確。
-export const APP_VERSION = "v2.5.0";
+export const APP_VERSION = "v2.6.0";
 
 const WS_URL = (() => {
   const proto = location.protocol === "https:" ? "wss" : "ws";
