@@ -36,10 +36,26 @@ export default function DirectorCanvas({ wsUrl }) {
       prevGameOverRef.current = snap.game_over ?? false;
 
       if (snap.game_over && !gameOverData) {
+        // EN: Phase 23 — Director leaderboard now mirrors the same data
+        //     contract the player overlay uses (activeType + sandboxEnabled).
+        //     Previously these two fields were omitted, so
+        //     `closeLocked = !undefined = true` froze the Close button —
+        //     the director would open the modal and have no way to dismiss
+        //     it. Pulling them straight from the snapshot keeps director
+        //     parity with everyone else.
+        // zh-TW: Phase 23 — 導播視角的排行榜資料合約改為與玩家覆蓋層一致
+        //     （帶上 activeType 與 sandboxEnabled）。之前省略這兩個欄位
+        //     會讓 `closeLocked = !undefined = true`，導播開啟覆蓋層後
+        //     完全無法關閉。直接從 snapshot 取值，讓導播與玩家共享相同
+        //     行為。
         const cols = (snap.settings?.leaderboard_columns || "kills,deaths,damage_dealt,damage_taken")
           .split(",").map(s => s.trim()).filter(Boolean);
-        const sorted = [...(snap.players || [])].sort((a, b) => (b.kills ?? 0) - (a.kills ?? 0));
-        setGameOverData({ players: sorted, columns: cols });
+        const activeType = snap.active_leaderboard_type || "kills";
+        const sandboxEnabled = snap.sandbox_enabled !== undefined ? !!snap.sandbox_enabled : true;
+        const sorted = [...(snap.players || [])].sort(
+          (a, b) => (b[activeType] ?? 0) - (a[activeType] ?? 0),
+        );
+        setGameOverData({ players: sorted, columns: cols, activeType, sandboxEnabled });
       }
     }, 200);
     return () => clearInterval(id);
@@ -135,14 +151,20 @@ export default function DirectorCanvas({ wsUrl }) {
         ctx.fillStyle = "#fbbf24";
         for (const b of snap.bullets ?? []) ctx.fillRect(b.x, b.y, b.w, b.h);
 
-        // players
+        // EN: Phase 23 — `p.team` no longer exists (Teams feature was
+        //     scrubbed in Phase 20). The leftover team-colour branches kept
+        //     evaluating to undefined and silently fell through to green,
+        //     so every player appeared green in director view. Now render
+        //     alive players in the same blue tone GameCanvas uses for
+        //     non-local players and dead players in slate-grey.
+        // zh-TW: Phase 23 — `p.team` 已不存在（Phase 20 移除隊伍功能）。
+        //     原本的隊伍配色分支會 fallback 至綠色，導致導播視角所有玩家
+        //     都被畫成綠色。改用 GameCanvas 對非本機玩家使用的藍色，
+        //     陣亡玩家則為灰色。
         ctx.font = `${12 / v.scale}px sans-serif`;
         for (const p of snap.players ?? []) {
           const alive = p.state === "alive";
-          const fill = !alive ? "#475569"
-            : p.team === "red" ? "#ef4444"
-            : p.team === "blue" ? "#3b82f6"
-            : "#22c55e";
+          const fill = alive ? "#3b82f6" : "#475569";
           ctx.fillStyle = fill;
           ctx.fillRect(p.x, p.y, p.w, p.h);
           if (alive) {

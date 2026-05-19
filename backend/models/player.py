@@ -20,8 +20,17 @@ STATE_SPECTATING = "spectating"
 @dataclass
 class Player(GameObject):
     name: str = "player"
-    hp: float = 200.0
-    max_hp: float = 200.0
+    # EN: Phase 23 — dataclass default lowered from 200 → 50 to stay in sync
+    #     with `GameSettings.default_player_hp`. Engine.add_player still
+    #     overrides both fields from settings before broadcast, so this is a
+    #     belt-and-braces default for any path that constructs a Player
+    #     without going through the engine.
+    # zh-TW: Phase 23 — dataclass 預設由 200 降為 50，與
+    #     `GameSettings.default_player_hp` 同步。引擎在 add_player 時仍會
+    #     依設定覆寫這兩個欄位再廣播，這裡只是雙保險預設，給任何不經
+    #     引擎建立 Player 的路徑使用。
+    hp: float = 50.0
+    max_hp: float = 50.0
     speed: float = 220.0
     angle: float = 0.0
 

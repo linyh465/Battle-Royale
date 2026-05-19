@@ -102,7 +102,14 @@ class GameSettings:
     game_duration: float = 0.0
     leaderboard_columns: str = "kills,deaths,damage_dealt,damage_taken"
     # HP defaults
-    default_player_hp: float = 200.0
+    # EN: Phase 23 — player base HP dropped from 200 → 50 so the default
+    #     pace matches bots (50 HP) and produces faster, more decisive
+    #     duels out of the box. Admins can still bump this from the dashboard
+    #     for tankier matches.
+    # zh-TW: Phase 23 — 玩家基礎血量由 200 降為 50，使預設節奏與 Bot 一致
+    #     （Bot 也是 50），預設場次更快、勝負更明確。管理員仍可在面板拉高
+    #     此值來進行高血量對戰。
+    default_player_hp: float = 50.0
     default_bot_hp: float = 50.0
     bot_respawn_time: float = 15.0
     bot_atk_speed_min: float = 0.2

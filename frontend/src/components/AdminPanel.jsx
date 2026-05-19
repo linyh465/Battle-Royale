@@ -148,7 +148,23 @@ export default function AdminPanel({ stateRef, send, onClose }) {
     send({ type: "admin_set", key, value });
   };
 
-  const sortKey = liveSetting("leaderboard_sort_by", "kills");
+  // EN: Phase 23 — `sortKey` is now driven by `active_leaderboard_type`,
+  //     the SAME field that controls the player-facing FullLeaderboard and
+  //     the right-rail LiveLeaderboardCard. Previously the admin had three
+  //     overlapping leaderboard settings (`leaderboard_sort_by`,
+  //     `leaderboard_columns`, `active_leaderboard_type`) which fought each
+  //     other — the roster sorted by one field while the final overlay
+  //     showed another. Unifying on `active_leaderboard_type` collapses the
+  //     three controls into one mental model. The legacy fields are kept on
+  //     the dataclass for wire-format stability, but no UI surfaces them.
+  // zh-TW: Phase 23 — `sortKey` 改由 `active_leaderboard_type` 控制，與玩家
+  //     端 FullLeaderboard、右欄 LiveLeaderboardCard 共用同一個欄位。
+  //     先前管理員面板同時擁有三個彼此衝突的排行榜設定
+  //     （`leaderboard_sort_by`、`leaderboard_columns`、
+  //     `active_leaderboard_type`），導致玩家名單依某欄排序、賽後覆蓋層
+  //     卻顯示別欄。改為統一以 `active_leaderboard_type` 為唯一來源，
+  //     原欄位仍保留在 dataclass 以維持線上格式相容，但 UI 不再呈現。
+  const sortKey = liveSetting("active_leaderboard_type", "kills");
   const sorted = [...players].sort((a, b) => (b[sortKey] ?? 0) - (a[sortKey] ?? 0));
   const timeRemaining = snap?.game_time_remaining ?? 0;
   const gameOver = snap?.game_over ?? false;
@@ -173,21 +189,15 @@ export default function AdminPanel({ stateRef, send, onClose }) {
   //     一致地套用「樂觀更新 + 伺服器確認後清除」流程。
   const setKey = (key, value) => commitSetting(key, value);
 
-  // ── Leaderboard column toggles ─────────────────────────────────────────
-  const allCols = ["kills", "deaths", "damage_dealt", "damage_taken"];
-  const colLabels = { kills: t.kills, deaths: t.deaths, damage_dealt: t.damageDealt, damage_taken: t.damageTaken };
-  const activeCols = liveSetting("leaderboard_columns", "kills,deaths,damage_dealt,damage_taken")
-    .split(",").map(s => s.trim()).filter(Boolean);
-  const toggleCol = (col) => {
-    let next;
-    if (activeCols.includes(col)) {
-      next = activeCols.filter(c => c !== col);
-      if (next.length === 0) return;
-    } else {
-      next = [...activeCols, col];
-    }
-    commitSetting("leaderboard_columns", next.join(","));
-  };
+  // EN: Phase 23 — removed `allCols`, `colLabels`, `activeCols`, `toggleCol`
+  //     helpers. They drove the now-defunct "Final Leaderboard Columns"
+  //     toggle bank; the field is no longer read by the player-facing
+  //     overlay (see GameCanvas FullLeaderboard) so the helpers became
+  //     dead code.
+  // zh-TW: Phase 23 — 移除 `allCols` / `colLabels` / `activeCols` /
+  //     `toggleCol` 等 helper。它們驅動的「最終排行榜欄位」切換列已被
+  //     刪除，且玩家端覆蓋層不再讀取 `leaderboard_columns`，所以這些
+  //     helper 已成為死碼。
 
   // ── Weapon allow-list toggles ─────────────────────────────────────────
   // EN: Phase 12 — uses the same `pending` pipeline as all other toggles.
@@ -289,25 +299,17 @@ export default function AdminPanel({ stateRef, send, onClose }) {
               zh-TW: Phase 20 — 已移除隊伍切換。Teams 功能已從專案中全面
                   清除，GameSettings 已不再有 team_mode 欄位。 */}
 
-          <div className="br-field">
-            <label className="br-field-label">{t.sortLeaderboard}</label>
-            {/* EN: `value` reads through liveSetting so the dropdown does
-                    not flicker between click and server-confirmation.
-                zh-TW: `value` 透過 liveSetting 取值，避免點擊到伺服器確認
-                    之間下拉選單閃回舊值。 */}
-            <select className="br-select" value={sortKey}
-              onChange={(e) => setKey("leaderboard_sort_by", e.target.value)}>
-              <option value="kills">{t.kills}</option>
-              <option value="deaths">{t.deaths}</option>
-              <option value="damage_dealt">{t.damageDealt}</option>
-              <option value="damage_taken">{t.damageTaken}</option>
-            </select>
-          </div>
-
-          {/* EN: Phase 18 — admin selects which leaderboard category is shown
-                  on the POST_GAME overlay. Players see only this category.
-              zh-TW: Phase 18 — 管理員選擇 POST_GAME 排行榜覆蓋層顯示的類別。
-                  玩家只能看到這個類別。 */}
+          {/* EN: Phase 23 — single unified "Leaderboard View" select that
+                  drives every leaderboard surface (player POST_GAME overlay,
+                  admin player-roster sort, admin LiveLeaderboardCard). The
+                  former separate "Sort Leaderboard" dropdown was removed
+                  because it could fight this setting and leave the UI in a
+                  confusing split state.
+              zh-TW: Phase 23 — 統一的「排行榜顯示類別」下拉，控制所有排行榜
+                  介面（玩家端 POST_GAME 覆蓋層、管理員玩家名單排序、
+                  管理員 LiveLeaderboardCard）。先前獨立的「計分板排序」
+                  下拉已移除，避免兩個設定彼此打架、UI 呈現混亂的不一致
+                  狀態。 */}
           <div className="br-field">
             <label className="br-field-label">{t.leaderboardType}</label>
             <select className="br-select"
@@ -418,7 +420,7 @@ export default function AdminPanel({ stateRef, send, onClose }) {
           <NumSetting
             label={t.defaultPlayerHp}
             serverValue={settings.default_player_hp}
-            fallback={200}
+            fallback={50}
             min={1} step={10}
             onCommit={(v) => setKey("default_player_hp", v)}
           />
@@ -479,19 +481,19 @@ export default function AdminPanel({ stateRef, send, onClose }) {
 
           <div className="br-divider" />
 
-          <PanelHead title={t.selectColumns} small />
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {allCols.map(col => (
-              <button key={col}
-                className={`br-filter-tab ${activeCols.includes(col) ? "is-active" : ""}`}
-                onClick={() => toggleCol(col)}
-                style={{ fontSize: 11 }}>
-                {colLabels[col]}
-              </button>
-            ))}
-          </div>
-
-          <div className="br-divider" />
+          {/* EN: Phase 23 — the legacy "Final Leaderboard Columns" toggle
+                  row has been removed. Since Phase 18 the FullLeaderboard
+                  renders ONE column (driven by active_leaderboard_type), so
+                  the column allow-list was dead UI that only confused
+                  admins into thinking they could re-enable the multi-column
+                  view. The `leaderboard_columns` field is retained on the
+                  dataclass for wire-format stability but is no longer read.
+              zh-TW: Phase 23 — 移除舊版「最終排行榜欄位」切換列。自
+                  Phase 18 起 FullLeaderboard 僅渲染單一欄位（由
+                  active_leaderboard_type 決定），此清單早已成為僅會誤導
+                  管理員以為能重新啟用多欄檢視的失效 UI。
+                  `leaderboard_columns` 仍保留在 dataclass 以維持線上格式
+                  相容，但不再被讀取。 */}
 
           <PanelHead title={t.access} small />
           <PasswordChangeRow

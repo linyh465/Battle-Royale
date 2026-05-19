@@ -73,6 +73,25 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   // zh-TW: Phase 17 — 全域暫停覆蓋層的 React 狀態。由 10 Hz overlay poll
   //     更新，管理員切換暫停時 React 才會重新渲染。
   const [pauseState, setPauseState] = useState({ paused: false, message: "" });
+  // EN: Phase 23 — track admin-controlled FullLeaderboard inputs as React
+  //     state so toggling sandbox / leaderboard category in the dashboard
+  //     propagates LIVE to the open POST_GAME overlay. Previously these
+  //     values were read straight from `stateRef.current` inside the render
+  //     IIFE, but React only re-renders when one of its useState slots
+  //     changes — meaning a sandbox toggle never reached the open modal
+  //     until something else (overlay tick, pause flip) happened to nudge
+  //     the tree. The 10 Hz overlay poll now syncs both fields explicitly.
+  // zh-TW: Phase 23 — 用 React state 追蹤管理員可調的 FullLeaderboard 來源
+  //     資料（沙盒開關 + 排行榜類別），確保切換後立即傳達到已開啟的
+  //     POST_GAME 覆蓋層。先前這兩個值是 render IIFE 中直接讀
+  //     `stateRef.current`，但 React 只在 useState 有變化時才重新渲染，
+  //     導致沙盒 toggle 無法即時生效，需要其他狀態（overlay tick / pause
+  //     切換）順帶觸發 re-render 才會更新。10 Hz overlay poll 現在也會
+  //     同步這兩個欄位。
+  const [boardCfg, setBoardCfg] = useState({
+    sandboxEnabled: true,
+    activeType: "kills",
+  });
 
   const prevResetSeqRef = useRef(0);
   const prevMatchStateRef = useRef("PLAYING");
@@ -250,6 +269,19 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
         if (prev.paused === snapPaused && prev.message === snapPauseMsg) return prev;
         return { paused: snapPaused, message: snapPauseMsg };
       });
+
+      // EN: Phase 23 — sync FullLeaderboard config (sandbox toggle + active
+      //     category) so admin changes propagate to the open POST_GAME
+      //     overlay in near real-time (≤100 ms via this 10 Hz tick).
+      // zh-TW: Phase 23 — 同步 FullLeaderboard 的設定（沙盒開關 + 排行榜
+      //     類別），管理員調整後最多 100ms（此 10 Hz tick）內就會反映到
+      //     POST_GAME 覆蓋層上。
+      const snapSandbox = snap.sandbox_enabled !== undefined ? !!snap.sandbox_enabled : true;
+      const snapActiveType = snap.active_leaderboard_type || "kills";
+      setBoardCfg((prev) => {
+        if (prev.sandboxEnabled === snapSandbox && prev.activeType === snapActiveType) return prev;
+        return { sandboxEnabled: snapSandbox, activeType: snapActiveType };
+      });
     }, 100);
     return () => clearInterval(id);
   }, [stateRef]);
@@ -338,6 +370,23 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
     };
   }, [stateRef, status, t, showFinalBoard]);
 
+  // EN: Phase 23 — when the admin disables sandbox during POST_GAME, force
+  //     every connected player back into the frozen-leaderboard overlay
+  //     immediately. Without this hook the engine would still publish the
+  //     new flag but a player who had already closed the modal would stay
+  //     in the sandbox brawl until the next match reset. Re-opening the
+  //     modal honours the admin intent without needing a forced disconnect.
+  // zh-TW: Phase 23 — 管理員在 POST_GAME 中關閉沙盒時，立刻把所有玩家拉回
+  //     凍結排行榜覆蓋層。沒有此 hook 時，引擎雖然會廣播新旗標，但已經
+  //     關閉排行榜進入沙盒對戰的玩家會繼續留在沙盒，直到下一次重置才會
+  //     看到變化。重新打開覆蓋層既符合管理員意圖，又不需強制斷線。
+  useEffect(() => {
+    if (boardCfg.sandboxEnabled) return;
+    const snap = stateRef.current;
+    if ((snap?.match_state || "PLAYING") !== "POST_GAME") return;
+    setShowFinalBoard(true);
+  }, [boardCfg.sandboxEnabled, stateRef]);
+
   const handleJoystick = useCallback((x, y) => { joystickRef.current.x = x; joystickRef.current.y = y; }, []);
   const handleAim = useCallback((angle, active) => {
     aimRef.current.angle = angle;
@@ -367,20 +416,28 @@ export default function GameCanvas({ wsUrl, name, weapon }) {
   const finalBoardData = (() => {
     const snap = stateRef.current;
     if (!snap) return null;
-    const cols = (snap.settings?.leaderboard_columns || "kills,deaths,damage_dealt,damage_taken")
-      .split(",").map(s => s.trim()).filter(Boolean);
     const frozen = Array.isArray(snap.frozen_leaderboard) && snap.frozen_leaderboard.length > 0
       ? snap.frozen_leaderboard
       : (snap.players || []);
+    // EN: Phase 23 — `activeType` / `sandboxEnabled` come from React state
+    //     (boardCfg, kept in sync by the 10 Hz overlay poll). This is what
+    //     makes the admin toggle propagate live to the open overlay; reading
+    //     them straight from `stateRef.current` here would silently capture
+    //     the value at last render and never update again.
+    //     The legacy `columns` array used to be derived from
+    //     `leaderboard_columns` and shipped here, but Phase 23 retired that
+    //     setting (FullLeaderboard renders a single column per activeType),
+    //     so the field has been dropped from the payload too.
+    // zh-TW: Phase 23 — `activeType` 與 `sandboxEnabled` 改由 React state
+    //     （boardCfg，由 10 Hz overlay poll 持續同步）提供。這正是讓
+    //     管理員 toggle 即時傳達到已開啟覆蓋層的關鍵；若仍直接從
+    //     `stateRef.current` 讀取，會在最後一次 render 凍結住、之後不再
+    //     更新。Phase 23 同步移除舊版由 `leaderboard_columns` 衍生的
+    //     `columns` 陣列，FullLeaderboard 每次只渲染一欄、不再需要該欄位。
     return {
       players: frozen,
-      columns: cols,
-      // EN: Phase 18 — pass active leaderboard type + sandbox toggle to the
-      //     FullLeaderboard so it can render only the selected category and
-      //     conditionally disable the Close button.
-      // zh-TW: Phase 18 — 傳遞排行榜類別與沙盒開關給 FullLeaderboard。
-      activeType: snap.active_leaderboard_type || "kills",
-      sandboxEnabled: snap.sandbox_enabled !== undefined ? snap.sandbox_enabled : true,
+      activeType: boardCfg.activeType,
+      sandboxEnabled: boardCfg.sandboxEnabled,
     };
   })();
 
@@ -604,22 +661,42 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
   const closeLocked = !sandboxEnabled;
 
   return (
-    <div style={{
+    <div className="br-final-board" style={{
       position: "fixed", inset: 0, zIndex: 500,
       background: "rgba(3,6,13,0.93)",
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "flex-start",
-      padding: "20px 12px 32px",
+      padding: "clamp(8px, 2vh, 20px) 12px clamp(12px, 3vh, 32px)",
     }}>
-      <div style={{
-        fontFamily: "var(--br-display)", fontSize: "clamp(22px,5vw,52px)",
+      {/* EN: Phase 23 — landscape-mobile rescue. The previous layout relied on
+              vw-based clamps for the title, leaving the scroll body crushed to
+              0 px on short landscape phones (~320 px tall). Switching to
+              vh-aware clamps + `flex: 1 1 0` and adding a `<style>` block
+              that compresses chrome under `max-height: 500px` guarantees the
+              scroll list is always the dominant region.
+          zh-TW: Phase 23 — 手機橫向救援。先前版本用 vw 設定標題大小，導致
+              ~320px 高的橫向手機 scroll 區域被壓為 0；改用 vh 感知的 clamp
+              並把 scroll 容器設為 `flex: 1 1 0`，再用 `<style>` 區塊在
+              `max-height: 500px` 時收緊外層 chrome，確保排行榜列永遠是
+              畫面的主要區域。 */}
+      <style>{`
+        @media (max-height: 500px) {
+          .br-final-board-title { font-size: 18px !important; letter-spacing: 0.12em !important; }
+          .br-final-board-sub { display: none !important; }
+          .br-final-board-tabs { margin-bottom: 6px !important; gap: 4px !important; }
+          .br-final-board-tab { padding: 2px 10px !important; font-size: 10px !important; }
+          .br-final-board-close { padding: 6px 24px !important; margin-top: 6px !important; }
+        }
+      `}</style>
+      <div className="br-final-board-title" style={{
+        fontFamily: "var(--br-display)", fontSize: "clamp(20px, min(5vw, 5vh), 52px)",
         fontWeight: 700, letterSpacing: "0.18em", color: "#ff3b5c",
         textShadow: "0 0 32px rgba(255,59,92,0.7)", marginBottom: 4,
-        flexShrink: 0,
+        flexShrink: 0, lineHeight: 1.1,
       }}>
         {t.gameOver}
       </div>
-      <div style={{
+      <div className="br-final-board-sub" style={{
         fontFamily: "var(--br-mono)", fontSize: "clamp(9px,2vw,11px)",
         letterSpacing: "0.32em", color: "#91a3c4", marginBottom: 6, flexShrink: 0,
       }}>
@@ -630,14 +707,14 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
               players see which leaderboard is active but cannot switch.
           zh-TW: Phase 18 — 類別頁籤列。僅管理員選中的頁籤發光；
               玩家可見目前是哪個排行榜，但無法自行切換。 */}
-      <div style={{
+      <div className="br-final-board-tabs" style={{
         display: "flex", gap: 6, marginBottom: 12, flexShrink: 0,
         flexWrap: "wrap", justifyContent: "center",
       }}>
         {categories.map(cat => {
           const isActive = cat.key === current.key;
           return (
-            <span key={cat.key} style={{
+            <span key={cat.key} className="br-final-board-tab" style={{
               padding: "4px 16px", borderRadius: 6,
               fontFamily: "var(--br-mono)", fontSize: "clamp(10px,2.5vw,12px)",
               fontWeight: 700, letterSpacing: "0.15em",
@@ -655,14 +732,23 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
       </div>
 
       {/* EN: Scroll container — single-column leaderboard for the active category.
-          zh-TW: 可捲動容器 — 僅顯示當前選中類別的單欄排行榜。 */}
+              Phase 23: `flex: 1 1 0` (instead of `1 1 auto`) forces the basis to
+              zero so the box shrinks from 0 and only grows to fill remaining
+              space, which makes the row area win the height tug-of-war on
+              landscape phones. `minHeight: 0` is still required to defeat the
+              default `auto` lower bound on flex items.
+          zh-TW: 可捲動容器 — 僅顯示當前選中類別的單欄排行榜。
+              Phase 23：把 `flex` 由 `1 1 auto` 改為 `1 1 0`，讓 basis 從 0
+              起算，並僅靠 flex-grow 填滿剩餘高度，這樣在橫向手機上才能贏得
+              高度爭奪。仍須保留 `minHeight: 0` 以解除 flex item 預設的
+              `auto` 下界。 */}
       <div style={{
         width: "100%", maxWidth: "min(98vw, 600px)",
         background: "rgba(10,18,38,0.9)",
         border: "1px solid rgba(110,145,200,0.2)",
         borderRadius: 10, overflow: "hidden",
         display: "flex", flexDirection: "column",
-        flex: "1 1 auto", minHeight: 0,
+        flex: "1 1 0", minHeight: 0,
       }}>
         <div style={{
           display: "grid",
@@ -681,7 +767,7 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
           </span>
         </div>
 
-        <div style={{ overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
+        <div style={{ overflowY: "auto", flex: "1 1 0", minHeight: 0 }}>
           {sorted.map((p, i) => {
             const isMe = localPlayerId && p.id === localPlayerId;
             return (
@@ -730,6 +816,7 @@ export function FullLeaderboard({ data, t, localPlayerId, onClose }) {
           zh-TW: Phase 18 — 僅保留「關閉」按鈕。管理員停用沙盒時按鈕灰化不可點。 */}
       <div style={{ display: "flex", gap: 12, marginTop: 16, flexShrink: 0, flexDirection: "column", alignItems: "center" }}>
         <button
+          className="br-final-board-close"
           style={{
             padding: "10px 36px",
             background: closeLocked ? "rgba(110,145,200,0.06)" : "rgba(34,211,238,0.12)",

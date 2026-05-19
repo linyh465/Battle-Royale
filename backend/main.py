@@ -111,10 +111,23 @@ app = FastAPI(
     openapi_url="/api-docs/openapi.json",
     swagger_ui_oauth2_redirect_url="/api-docs/oauth2-redirect",
 )
+# EN: Phase 23 — CORS lockdown. The default was `allow_origins=["*"]` which
+#     happily authorised any third-party site to call /api/* and embed the
+#     game. Production deploys should pin this to the front-door origins via
+#     the `ALLOWED_ORIGINS` env var (comma-separated). Empty / unset falls
+#     back to the historical wildcard for local LAN development only.
+# zh-TW: Phase 23 — CORS 強化。原本 `allow_origins=["*"]` 等於允許任何第三方
+#     站台呼叫 /api/* 或內嵌遊戲。正式部署可透過 `ALLOWED_ORIGINS` 環境變數
+#     （逗號分隔）鎖定來源，未設定時保留 wildcard 以便本機 / LAN 開發。
+_allowed_origins_raw = os.environ.get("ALLOWED_ORIGINS", "").strip()
+_allowed_origins = (
+    [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
+    if _allowed_origins_raw else ["*"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -240,6 +253,19 @@ async def ws_endpoint(ws: WebSocket):
     if htype == "join_admin":
         pwd = str(hello.get("password", ""))
         if pwd != engine.settings.admin_password:
+            # EN: Phase 23 — sleep before responding so a brute-force attacker
+            #     cannot blast through the password space at network speed.
+            #     One second per attempt + the existing WS rate limit
+            #     (10 connections / 5 s / IP) caps a single attacker at
+            #     ~120 attempts/min, raising the cost of guessing a weak
+            #     default password substantially. Legit admins typing the
+            #     right password the first time pay zero penalty.
+            # zh-TW: Phase 23 — 在回應失敗前刻意延遲，避免攻擊者以網路速度
+            #     高速嘗試密碼。每次失敗延遲 1 秒，搭配既有的 WS 速率限制
+            #     （每個 IP 5 秒最多 10 連線），單一攻擊者每分鐘最多約 120
+            #     次嘗試，大幅提高暴力破解預設弱密碼的代價。正確密碼
+            #     一次過關的合法管理員完全沒有額外延遲。
+            await asyncio.sleep(1.0)
             await ws.send_text(json.dumps({"type": "admin_fail"}))
             await ws.close(code=4001)
             return
@@ -343,6 +369,14 @@ async def ws_endpoint(ws: WebSocket):
                         "settings": _admin_settings_dict(),
                     }))
                 else:
+                    # EN: Phase 23 — same 1-second brute-force throttle as
+                    #     the dedicated join_admin handshake. The lobby
+                    #     5-click easter-egg path lands here, so the cost
+                    #     of guessing must be uniform regardless of entry.
+                    # zh-TW: Phase 23 — 與獨立 join_admin handshake 相同的
+                    #     1 秒延遲。大廳 5 連點彩蛋走的就是這條路徑，
+                    #     必須與另一條入口共用一致的延遲，才不會被當作旁路。
+                    await asyncio.sleep(1.0)
                     await ws.send_text(json.dumps({"type": "admin_fail"}))
             elif mtype == "admin_set" and is_admin:
                 engine.admin_set(msg.get("key"), msg.get("value"))
@@ -427,11 +461,34 @@ if _dist is not None:
         "assets/",
     )
 
+    # EN: Phase 23 — path-traversal hardening. Previously the handler did
+    #     `candidate = _dist / filename; if candidate.is_file(): return …`,
+    #     which a crafted URL like `/../etc/passwd` could potentially walk
+    #     above `_dist`. We now `.resolve()` the candidate and require it
+    #     to be a descendant of `_dist.resolve()`; anything outside the
+    #     dist tree falls back to `index.html` (the safe SPA behaviour).
+    # zh-TW: Phase 23 — 路徑穿越強化。先前 handler 直接以 `_dist / filename`
+    #     組路徑後檢查 `is_file()`，被特製 URL（如 `/../etc/passwd`）打中時
+    #     可能跳出 `_dist`。改為先 `.resolve()` 再要求結果必須位於
+    #     `_dist.resolve()` 之下；不在 dist 子樹的請求一律退回 SPA 的
+    #     `index.html`。
+    _dist_resolved = _dist.resolve()
+
     @app.get("/{filename:path}", include_in_schema=False)
     async def spa_fallback(filename: str):
         if filename.startswith(_RESERVED_PREFIXES):
             raise HTTPException(status_code=404)
-        candidate = _dist / filename
-        if filename and candidate.is_file():
-            return FileResponse(candidate)
+        if filename:
+            try:
+                candidate = (_dist / filename).resolve()
+            except (OSError, ValueError):
+                candidate = None
+            if candidate is not None:
+                try:
+                    candidate.relative_to(_dist_resolved)
+                    inside = True
+                except ValueError:
+                    inside = False
+                if inside and candidate.is_file():
+                    return FileResponse(candidate)
         return FileResponse(_dist / "index.html")

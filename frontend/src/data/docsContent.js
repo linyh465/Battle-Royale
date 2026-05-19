@@ -341,7 +341,20 @@ All unknown routes fall back to \`index.html\`, handled by React Router. Unmatch
 - **Death Screen Cooldown Alignment:** The respawn button's countdown ring is now a strict \`relative\` flex container; the SVG is \`absolute inset-0\` and the countdown number sits inside the same container as the only flow child. Number and progress circle are natively centred — no manual margins, no more offset.
 - **Admin Live Leaderboard Widget:** New \`<LiveLeaderboardCard>\` in the Admin Dashboard right column. Consumes the existing snapshot, sorts by \`active_leaderboard_type\`, and renders the top 8 players (bots flagged 🤖; row colour reflects state) on every 250 ms tick.
 - **Flat 4-Second Respawn:** \`GameSettings.base_respawn_time\` → \`4.0\` and \`respawn_penalty\` → \`0.0\`. The Phase 15 dynamic formula \`base + deaths × penalty\` is retired; respawn is now a static 4 seconds regardless of death count. Admin can still override per match.
-- **Version Bump:** \`APP_VERSION\` advanced to \`v2.6.0\` to reflect the new admin widget plus the respawn-mechanic change.`,
+- **Version Bump:** \`APP_VERSION\` advanced to \`v2.6.0\` to reflect the new admin widget plus the respawn-mechanic change.
+
+## Phase 23 — Leaderboard Unification, Reactive Sandbox & Security Hardening
+
+- **Landscape-Mobile Final Leaderboard Rescue:** \`<FullLeaderboard>\` previously crushed its scrollable row area to ~0 px on short landscape phones (≤500 px tall) because the title clamped on \`vw\` and the scroll container used \`flex: 1 1 auto\`. Title now clamps on \`min(5vw, 5vh)\`, padding is vh-aware, the scroll container uses \`flex: 1 1 0\`, and a \`@media (max-height: 500px)\` block compresses surrounding chrome so the rows always win the height tug-of-war.
+- **Reactive Sandbox Toggle:** Admin's "Post-Game Sandbox" switch now propagates live to every open POST_GAME overlay. Previously \`sandboxEnabled\` and \`activeType\` were read straight from \`stateRef.current\` inside the render IIFE, which only updated when something else triggered a React re-render. The 10 Hz overlay poll now writes both values into a new \`boardCfg\` React state. A companion effect re-opens the frozen leaderboard for any player still in the sandbox brawl the instant the admin disables sandbox.
+- **Lower Default Player HP (50):** \`GameSettings.default_player_hp\` and the \`Player\` dataclass default both dropped from 200 → 50, matching bots and producing snappier default fights. AdminPanel fallback updated accordingly; admins can still override.
+- **Leaderboard Settings Consolidated:** The Admin Dashboard's three overlapping leaderboard settings ("Sort Leaderboard", "Final Leaderboard Columns", "Leaderboard View") collapsed to ONE control: **Leaderboard View**, which now also drives the admin player-roster sort. The legacy \`leaderboard_sort_by\` / \`leaderboard_columns\` fields remain on \`GameSettings\` for wire-format stability but no UI surfaces them.
+- **Director-Canvas Bugs:** Director view previously rendered every player green (leftover \`p.team\` branches kept fall-throughing after the Phase 20 Teams removal) and froze the game-over overlay's Close button (it never received \`sandboxEnabled\`, so \`closeLocked = !undefined = true\`). Both fixed.
+- **Security & Firewall:**
+  - *CORS Lockdown* — \`allow_origins\` defaults to \`["*"]\` only when \`ALLOWED_ORIGINS\` env var is unset; production deploys should pin to the public origin. Allowed methods narrowed to \`GET / POST / OPTIONS\`.
+  - *Path-Traversal Hardening* — SPA fallback resolves \`candidate.resolve()\` and rejects any path that does not sit under \`_dist.resolve()\`, so crafted URLs cannot escape the dist tree.
+  - *Brute-Force Throttle* — Both admin auth paths (\`join_admin\` + lobby easter-egg \`admin_auth\`) sleep 1 s before responding to a wrong password, slowing dictionary attacks. Combined with the existing per-IP WS rate limit, a single attacker is capped at ~120 attempts/min.
+- **Version Bump:** \`APP_VERSION\` advanced to \`v2.7.0\`.`,
 
       designLog: `# Design Log — Battle Royale
 
@@ -679,7 +692,20 @@ PLAYING → POST_GAME → (重置對戰) → PLAYING
 - **死亡畫面倒數對齊修正：** 重生按鈕的倒數圓環改用嚴格的 \`relative\` flex 容器；SVG 以 \`absolute inset-0\` 鋪滿，倒數數字是容器內唯一的 flow 子元素。數字與進度圓環現由 flex 原生置中，無需任何手動 margin，偏移問題已消失。
 - **管理員即時排行榜小工具：** 管理員面板右欄新增 \`<LiveLeaderboardCard>\`。共用既有 snapshot，依 \`active_leaderboard_type\` 排序，顯示前 8 名玩家（bot 標 🤖、名字顏色反映狀態），每 250ms tick 重新渲染。
 - **固定 4 秒重生：** \`GameSettings.base_respawn_time\` → \`4.0\`、\`respawn_penalty\` → \`0.0\`。Phase 15 的動態公式 \`基礎 + 死亡 × 懲罰\` 退役，現一律靜態 4 秒重生；管理員仍可逐場覆寫。
-- **版本升版：** \`APP_VERSION\` 升至 \`v2.6.0\`，反映新增的管理員小工具與重生機制變更。`,
+- **版本升版：** \`APP_VERSION\` 升至 \`v2.6.0\`，反映新增的管理員小工具與重生機制變更。
+
+## Phase 23 — 排行榜統一化、即時沙盒與資安強化
+
+- **手機橫向最終排行榜救援：** \`<FullLeaderboard>\` 先前在短橫向手機（≤500 px 高）幾乎把可捲動的列區壓成 0 px，原因是標題用 \`vw\` clamp、scroll 容器用 \`flex: 1 1 auto\`。標題改為 \`min(5vw, 5vh)\` clamp，padding 改為 vh 感知，scroll 容器改 \`flex: 1 1 0\`，再加上 \`@media (max-height: 500px)\` 區塊壓縮周邊 chrome，列區永遠贏得高度爭奪。
+- **沙盒開關即時反應：** 管理員的「賽後沙盒」開關現在可即時傳達到所有已開啟的 POST_GAME 覆蓋層。先前 \`sandboxEnabled\` / \`activeType\` 在 render IIFE 中直接讀 \`stateRef.current\`，只有其他狀態觸發 re-render 時才更新；10 Hz overlay poll 現在將兩者寫進新的 \`boardCfg\` React state，並新增 effect：管理員一旦關閉沙盒，所有仍在沙盒對戰的玩家會立刻被拉回凍結排行榜覆蓋層。
+- **玩家預設血量降為 50：** \`GameSettings.default_player_hp\` 與 \`Player\` dataclass 預設皆由 200 降為 50，與 Bot 同步，預設場次節奏更快。AdminPanel fallback 同步更新；管理員仍可逐場覆寫。
+- **排行榜設定統一化：** 管理員面板三個彼此重疊的排行榜設定（「計分板排序」、「最終排行榜欄位」、「排行榜顯示類別」）合併為一個：**排行榜顯示類別**，同步驅動玩家名單排序。舊欄位 \`leaderboard_sort_by\` / \`leaderboard_columns\` 仍保留在 \`GameSettings\` 維持線上格式相容，但 UI 不再呈現。
+- **DirectorCanvas Bug 修正：** 導播視角先前因 Phase 20 移除隊伍後仍殘留 \`p.team\` 分支，所有玩家都被畫成綠色；遊戲結束覆蓋層也因未傳 \`sandboxEnabled\` 導致 \`closeLocked = !undefined = true\`，按鈕永久 disable。兩者皆修正。
+- **資訊安全與防火牆：**
+  - *CORS 鎖定* — 僅當 \`ALLOWED_ORIGINS\` 環境變數未設定時 \`allow_origins\` 才退回 \`["*"]\`；正式部署請鎖定真實來源。允許方法收緊為 \`GET / POST / OPTIONS\`。
+  - *路徑穿越強化* — SPA fallback 改以 \`candidate.resolve()\` 解析路徑，並拒絕任何不在 \`_dist.resolve()\` 子樹下的請求，避免被特製 URL 跳出 dist 目錄。
+  - *暴力破解節流* — 兩條管理員驗證路徑（\`join_admin\` 與大廳 5 連點彩蛋走的 \`admin_auth\`）在密碼錯誤時延遲 1 秒回應，搭配既有的 per-IP WS 速率限制，單一攻擊者每分鐘最多約 120 次嘗試。
+- **版本升版：** \`APP_VERSION\` 升至 \`v2.7.0\`。`,
 
       designLog: `# 設計日誌 — Battle Royale
 
