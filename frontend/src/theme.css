@@ -877,7 +877,8 @@ input, textarea, [contenteditable="true"] {
   text-shadow: 0 0 16px rgba(34,211,238,0.6);
 }
 .br-death-btn-ring {
-  position: absolute; inset: 12px; pointer-events: none;
+  position: relative; inset: auto;
+  pointer-events: none;
   color: var(--br-cyan);
   filter: drop-shadow(0 0 8px rgba(34,211,238,0.45));
 }
