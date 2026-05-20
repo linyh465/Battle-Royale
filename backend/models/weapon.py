@@ -118,7 +118,7 @@ class Shotgun(Weapon):
 @dataclass
 class Sniper(Weapon):
     name: str = "sniper"
-    damage: float = 60.0
+    damage: float = 25.0
     fire_rate: float = 0.8
     bullet_speed: float = 1500.0
     bullet_ttl: float = 1.5
@@ -144,12 +144,12 @@ class SMG(Weapon):
 @dataclass
 class RocketLauncher(Weapon):
     name: str = "rocket"
-    damage: float = 80.0
+    damage: float = 50.0
     fire_rate: float = 0.6
-    bullet_speed: float = 350.0
+    bullet_speed: float = 450.0
     bullet_ttl: float = 2.0
-    bullet_w: float = 14.0
-    bullet_h: float = 14.0
+    bullet_w: float = 100.0
+    bullet_h: float = 100.0
 
 
 # EN: Public list — used by GameSettings.allowed_weapons default and by the
