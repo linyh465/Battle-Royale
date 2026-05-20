@@ -147,7 +147,7 @@ class RocketLauncher(Weapon):
     damage: float = 50.0
     fire_rate: float = 0.6
     bullet_speed: float = 450.0
-    bullet_ttl: float = 2.0
+    bullet_ttl: float = 1.0
     bullet_w: float = 100.0
     bullet_h: float = 100.0
 
