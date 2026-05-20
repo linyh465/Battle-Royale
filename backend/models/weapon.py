@@ -86,7 +86,7 @@ class Rifle(Weapon):
 class Shotgun(Weapon):
     name: str = "shotgun"
     damage: float = 6.0
-    fire_rate: float = 1.6
+    fire_rate: float = 2
     bullet_speed: float = 600.0
     bullet_ttl: float = 0.5
     pellets: int = 6
@@ -120,8 +120,8 @@ class Sniper(Weapon):
     name: str = "sniper"
     damage: float = 25.0
     fire_rate: float = 0.8
-    bullet_speed: float = 1500.0
-    bullet_ttl: float = 1.5
+    bullet_speed: float = 1000.0
+    bullet_ttl: float = 1.0
 
 
 # ── 5. SMG — short range bullet hose ─────────────────────────────────────────
@@ -133,7 +133,7 @@ class SMG(Weapon):
     damage: float = 5.0
     fire_rate: float = 16.0
     bullet_speed: float = 700.0
-    bullet_ttl: float = 0.45
+    bullet_ttl: float = 0.5
 
 
 # ── 6. RocketLauncher — heavy slow projectile ────────────────────────────────
@@ -145,11 +145,11 @@ class SMG(Weapon):
 class RocketLauncher(Weapon):
     name: str = "rocket"
     damage: float = 50.0
-    fire_rate: float = 0.6
-    bullet_speed: float = 450.0
+    fire_rate: float = 0.5
+    bullet_speed: float = 500.0
     bullet_ttl: float = 1.0
-    bullet_w: float = 100.0
-    bullet_h: float = 100.0
+    bullet_w: float = 25.0
+    bullet_h: float = 25.0
 
 
 # EN: Public list — used by GameSettings.allowed_weapons default and by the
